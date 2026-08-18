@@ -61,62 +61,34 @@ tibble(componente = 1:5,
        x = 'Componente', y = '% Varianza') +
   theme_minimal()
 
-# ------------------------------------------------------------
-# SECCIÓN C: PCA con FactoMineR y rotación con psych
-# ------------------------------------------------------------
-# Nota: La decisión entre varimax y oblimin es teórica: si los
-# factores pueden estar correlacionados (lo habitual en actitudes
-# políticas), oblimin es más apropiado.
-
-pca_fm <- PCA(datos |>
-                select(starts_with('conf')),
-              scale.unit = TRUE,
-              ncp = 5,
-              graph = FALSE)
-
-# Eigenvalues
-pca_fm$eig
-
-# Contribución de variables al PC1
-fviz_contrib(pca_fm, choice = 'var', axes = 1)
-
-# Biplot
-fviz_pca_biplot(pca_fm,
-                repel = TRUE,
-                col.var = "#E74C3C",
-                col.ind = "#BDC3C7",
-                label = "var",
-                title = 'Biplot PCA: Confianza institucional')
-
-# --- Rotación con psych ---
-
-# Sin rotación
-pca_psych <- principal(datos |>
-                          select(starts_with('conf')),
-                        nfactors = 2, rotate = 'none')
-print(pca_psych$loadings, cutoff = 0.3)
-
-# Rotación varimax (ortogonal)
-pca_varimax <- principal(datos |>
-                            select(starts_with('conf')),
-                          nfactors = 2, rotate = 'varimax')
-print(pca_varimax$loadings, cutoff = 0.3)
-
-# Rotación oblimin (oblicua - permite correlación entre factores)
-pca_oblimin <- principal(datos |>
-                            select(starts_with('conf')),
-                          nfactors = 2, rotate = 'oblimin')
-print(pca_oblimin$loadings, cutoff = 0.3)
-pca_oblimin$Phi  # Correlación interfactorial
+##########################
+##### SESIÓN 1A.1 ##########
+##########################
 
 # ------------------------------------------------------------
-# EJERCICIO ADICIONAL: PCA con datos que SÍ tienen estructura
-# factorial real (comparación pedagógica)
+# 0. PAQUETES (todos al inicio, sin excepción)
 # ------------------------------------------------------------
+library(tidyverse)   # manipulación de datos y gráficos (incluye dplyr, ggplot2, tibble)
+library(psych)       # PCA con rotación, KMO, Bartlett, corr.test()
+library(GPArotation) # requerido por psych para rotaciones oblicuas (oblimin)
+library(FactoMineR)  # PCA con salidas enriquecidas
+library(factoextra)  # visualización de PCA (scree plot, biplot, contribuciones)
+library(corrplot)    # visualización de matrices de correlación
+library(haven)       # lectura de archivos de Stata (.dta)
+
+# Nota: Hmisc NO se carga con library() -- se llama directamente con
+# Hmisc::rcorr() más abajo. Cargar Hmisc junto con tidyverse puede
+# "enmascarar" funciones de dplyr (como summarize()), así que es más
+# seguro usarlo puntualmente sin cargarlo por completo.
+
+
+# ============================================================
+# BLOQUE 1: DATOS SIMULADOS CON ESTRUCTURA FACTORIAL
+# ============================================================
 
 set.seed(456)
 n <- 500
-factor_comun <- rnorm(n)  # el "factor latente" de confianza institucional
+factor_comun <- rnorm(n)
 
 datos_correlacionados <- tibble(
   conf_ejecutivo    = 0.75*factor_comun + rnorm(n, 0, 0.5),
@@ -126,41 +98,146 @@ datos_correlacionados <- tibble(
   conf_electoral    = 0.72*factor_comun + rnorm(n, 0, 0.5)
 )
 
-pca_correlacionado <- principal(datos_correlacionados, nfactors = 1, rotate = 'none')
-print(pca_correlacionado$loadings, cutoff = 0.3)
+# --- Correlación y significancia ---
+cor(datos_correlacionados)
 
-# PCA completo con prcomp (para scree plot y biplot)
-pca_correlacionado_completo <- prcomp(datos_correlacionados, scale. = TRUE)
+resultado_sim <- corr.test(datos_correlacionados)
+resultado_sim$r   # matriz de coeficientes de correlación
+resultado_sim$p   # matriz de valores p (significancia)
 
-varianza_corr <- pca_correlacionado_completo$sdev^2 / sum(pca_correlacionado_completo$sdev^2)
+corrplot(cor(datos_correlacionados),
+         method = 'color', type = 'upper', addCoef.col = 'black',
+         tl.col = 'black', tl.srt = 45,
+         title = 'Correlación entre ítems (datos con estructura factorial)',
+         mar = c(0,0,1,0))
 
-tibble(componente = 1:5,
-       varianza_pct = varianza_corr * 100,
-       acumulada = cumsum(varianza_corr * 100)) |>
-  ggplot(aes(x = componente, y = varianza_pct)) +
-  geom_col(fill = "#2C3E50") +
-  geom_line(aes(y = acumulada), color = 'red', linewidth = 1) +
-  geom_point(aes(y = acumulada), color = 'red', size = 3) +
-  labs(title = 'Scree Plot: datos CON estructura factorial',
-       x = 'Componente', y = '% Varianza') +
-  theme_minimal()
+# --- Adecuación muestral ---
+KMO(datos_correlacionados)
+cortest.bartlett(cor(datos_correlacionados), n = nrow(datos_correlacionados))
 
-pca_fm_corr <- PCA(datos_correlacionados,
-                    scale.unit = TRUE,
-                    ncp = 5,
-                    graph = FALSE)
+# --- PCA con psych (rotación) ---
+# Un solo objeto, con el número de factores que decidiste usar (2):
+pca_psych_sim <- principal(datos_correlacionados, nfactors = 2, rotate = 'none')
+print(pca_psych_sim$loadings, cutoff = 0.3)
+print(pca_psych_sim$loadings)
 
-fviz_pca_biplot(pca_fm_corr,
-                repel = TRUE,
-                col.var = "#E74C3C",
-                col.ind = "#BDC3C7",
+# --- PCA con FactoMineR (para scree plot y biplot) ---
+pca_fm_sim <- PCA(datos_correlacionados, scale.unit = TRUE, ncp = 5, graph = FALSE)
+pca_fm_sim$eig
+
+# SCREE PLOT (versión correcta -- una sola línea, con fviz_eig):
+fviz_eig(pca_fm_sim, addlabels = TRUE,
+         main = 'Scree Plot: datos con estructura factorial')
+
+fviz_pca_biplot(pca_fm_sim,
+                repel = TRUE, col.var = "#E74C3C", col.ind = "#BDC3C7",
                 label = "var",
-                title = 'Biplot PCA: datos CON estructura factorial')
+                title = 'Biplot PCA: datos con estructura factorial')
 
-fviz_contrib(pca_fm_corr, choice = 'var', axes = 1)
+fviz_contrib(pca_fm_sim, choice = 'var', axes = 1)
+fviz_contrib(pca_fm_sim, choice = 'var', axes = 2)
+
+
+# ============================================================
+# BLOQUE 2: DATOS REALES -- LAPOP MÉXICO 2023
+# ============================================================
+
+getwd()
+
+# Ajusta la ruta según donde tengas guardado el archivo.
+# OJO: el nombre real del archivo usa guion bajo (v1_0), no punto (v1.0).
+lapop <- read_dta('/Users/isaaccisneros/Desktop/2023_MEX_2023_LAPOP_AmericasBarometer_v1.0_w.dta')
+
+
+items_lapop <- lapop |>
+  select(conf_ejecutivo   = b21a,
+         conf_legislativo = b13,
+         conf_judicial    = b31,
+         conf_partidos    = b21,
+         conf_electoral   = b47a) |>
+  drop_na()
+
+nrow(items_lapop)
+
+# --- Correlación y significancia ---
+cor(items_lapop)
+
+resultado_lapop <- corr.test(items_lapop)
+resultado_lapop$r
+resultado_lapop$p
+
+corrplot(cor(items_lapop),
+         method = 'color', type = 'upper', addCoef.col = 'black',
+         tl.col = 'black', tl.srt = 45,
+         title = 'Correlación entre ítems de confianza institucional (LAPOP México 2023)',
+         mar = c(0,0,1,0))
+
+# --- Adecuación muestral ---
+KMO(items_lapop)
+cortest.bartlett(cor(items_lapop), n = nrow(items_lapop))
+
+# --- PCA con psych (SIN rotación), objeto separado del de FactoMineR ---
+pca_psych_lapop <- principal(items_lapop, nfactors = 2, rotate = 'none')
+print(pca_psych_lapop$loadings)
+print(pca_psych_lapop$loadings, cutoff = 0)
+
+# --- PCA con FactoMineR (para eigenvalues, scree plot y biplot) ---
+pca_fm_lapop <- PCA(items_lapop, scale.unit = TRUE, ncp = 5, graph = FALSE)
+pca_fm_lapop$eig
+
+# SCREE PLOT (versión correcta -- una sola línea, con fviz_eig):
+fviz_eig(pca_fm_lapop, addlabels = TRUE, main = 'Scree Plot: LAPOP México 2023')
+
+fviz_pca_biplot(pca_fm_lapop,
+                repel = TRUE, label = "var",
+                col.var = "#E74C3C", col.ind = "#BDC3C7",
+                title = 'Biplot PCA: Confianza institucional (LAPOP México 2023)')
+
+fviz_contrib(pca_fm_lapop, choice = 'var', axes = 1)
+fviz_contrib(pca_fm_lapop, choice = 'var', axes = 2)
+
+##PCA con psych (SIN rotación), objeto separado del de FactoMineR ---
+pca_psych_lapop <- principal(items_lapop, nfactors = 2, rotate = 'none')
+print(pca_psych_lapop$loadings)
+print(pca_psych_lapop$loadings, cutoff = 0.3)
+
+cor(pca_psych_lapop$scores)
+
+plot(pca_psych_lapop$loadings,
+     xlim = c(-1, 1), ylim = c(-1, 1),
+     main = 'Cargas sin rotación (LAPOP)', xlab = 'PC1', ylab = 'PC2')
+text(pca_psych_lapop$loadings, labels = rownames(pca_psych_lapop$loadings), pos = 3, col = 'red')
+abline(h = 0, v = 0, lty = 2)
+
+# --- PCA con psych: rotación VARIMAX (ortogonal) ---
+pca_psych_lapop_varimax <- principal(items_lapop, nfactors = 2, rotate = 'varimax')
+print(pca_psych_lapop_varimax$loadings)
+print(pca_psych_lapop_varimax$loadings, cutoff = 0.3)
+
+plot(pca_psych_lapop_varimax$loadings,
+     xlim = c(-1, 1), ylim = c(-1, 1),
+     main = 'Cargas rotación varimax (LAPOP)', xlab = 'RC1', ylab = 'RC2')
+text(pca_psych_lapop_varimax$loadings, labels = rownames(pca_psych_lapop_varimax$loadings), pos = 3, col = 'red')
+abline(h = 0, v = 0, lty = 2)
+
+# --- PCA con psych: rotación OBLIMIN (oblicua) ---
+pca_psych_lapop_oblimin <- principal(items_lapop, nfactors = 2, rotate = 'oblimin')
+print(pca_psych_lapop_oblimin$loadings)
+print(pca_psych_lapop_oblimin$loadings, cutoff = 0.3)
+pca_psych_lapop_oblimin$Phi  # Correlación interfactorial (solo aplica a rotaciones oblicuas)
+
+plot(pca_psych_lapop_oblimin$loadings,
+     xlim = c(-1, 1), ylim = c(-1, 1),
+     main = 'Cargas rotación oblimin (LAPOP)', xlab = 'TC1', ylab = 'TC2')
+text(pca_psych_lapop_oblimin$loadings, labels = rownames(pca_psych_lapop_oblimin$loadings), pos = 3, col = 'red')
+abline(h = 0, v = 0, lty = 2)
+# Nota: con oblimin, psych a veces nombra los componentes TC1/TC2 en vez de
+# RC1/RC2 -- verifica en tu consola cómo salieron y ajusta xlab/ylab si hace falta.
+
+
 
 # ------------------------------------------------------------
-# Limpieza de sesión (opcional, al terminar de trabajar)
+# LIMPIEZA DE SESIÓN (solo al final, cuando ya terminaste de trabajar)
 # ------------------------------------------------------------
 # rm(list = ls())
 # graphics.off()
