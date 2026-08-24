@@ -9,7 +9,7 @@ Este repositorio se actualiza sesión por sesión conforme avanza el curso.
 | Tema | Técnica | Carpeta |
 |---|---|---|
 | 1 | Análisis de Componentes Principales (PCA) | [`Tema_1_PCA/`](./Tema_1_PCA) |
-| 2 | Análisis Factorial Exploratorio | `Tema_2_AFE/`](./Tema_2_AFE) |
+| 2 | Análisis Factorial Exploratorio | [`Tema_2_AFE/`](./Tema_2_AFE) |
 | 3 | Análisis de Conglomerados | próximamente |
 | 4 | MDS y Análisis de Correspondencias | próximamente |
 | 5 | Análisis de Clases Latentes | próximamente |
