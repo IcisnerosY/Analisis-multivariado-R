@@ -524,6 +524,308 @@ fa_wvs$scores
 # se quisieran usar estos factores como variables en un modelo de
 # regresión (por ejemplo, para explicar participación política).
 
+# ============================================================
+# Análisis Factorial Confirmatorio (AFC)
+# Sesión 6
+# Curso: Análisis multivariado y métodos de clasificación de datos con R
+# El Colegio de México - Centro de Estudios Sociológicos
+# Profesor: Isaac Cisneros Yescas
+# ============================================================
+# Este script retoma el hallazgo de las Sesiones 4-5: con datos
+# de WVS México, la confianza institucional se organiza en 2
+# factores (política/estatal y sociedad civil). Ahí lo DESCUBRIMOS
+# con AFE, sin restricciones. Aquí lo PONEMOS A PRUEBA formalmente
+# con AFC: le decimos a R exactamente qué ítem va con qué factor,
+# y evaluamos si esa estructura ajusta bien a los datos.
+#
+# Hipótesis a confirmar (H1):
+# La confianza institucional en México se organiza en dos
+# dimensiones correlacionadas: confianza política/estatal y
+# confianza en la sociedad civil.
+# ============================================================
+
+
+# ------------------------------------------------------------
+# 0. PAQUETES
+# ------------------------------------------------------------
+library(tidyverse)
+library(lavaan)   # cfa(), summary(), fitMeasures(), modindices(), parameterEstimates()
+library(haven)    # read_dta()
+
+
+# ------------------------------------------------------------
+# 1. CARGA Y PREPARACIÓN DE DATOS (igual que en la Sesión 4-5)
+# ------------------------------------------------------------
+wvs <- read_dta("WVS_Wave_7_Mexico_Stata_v5.1.dta")
+wvs <- read_dta('/Users/isaaccisneros/Desktop/ISAAC/CURSO/Cursos 2026/DOCUMENTOS CURSO/R/SESION 2/WVS_Wave_7_Mexico_Stata_v5.1.dta')
+
+# Ajusta la ruta según donde tengas guardado el archivo, y recuerda
+# usar "/" en vez de "\", incluso en Windows.
+
+items_wvs <- wvs |>
+  select(fuerzas_armadas = Q65,
+         prensa          = Q66,
+         television      = Q67,
+         sindicatos      = Q68,
+         policia         = Q69,
+         tribunales      = Q70,
+         gobierno        = Q71,
+         partidos        = Q72,
+         parlamento      = Q73,
+         serv_civiles    = Q74,
+         elecciones      = Q76,
+         mov_ambiental   = Q79,
+         mov_mujeres     = Q80,
+         org_caritativas = Q81) |>
+  drop_na()
+# select(nuevo = original, ...): selecciona y renombra en un solo
+# paso, usando los mismos nombres que ya conoces de la Sesión 4-5.
+# drop_na(): elimina cualquier fila con NA en alguna de las 14
+# columnas seleccionadas.
+
+nrow(items_wvs)
+# Confirma cuántos casos completos quedaron disponibles (~1,591).
+
+
+# ------------------------------------------------------------
+# 2. ESPECIFICACIÓN DEL MODELO
+# ------------------------------------------------------------
+# Esta es LA diferencia central con el AFE: en fa() nunca le
+# dijimos a R qué ítem pertenecía a qué factor -- eso lo DESCUBRIÓ
+# el análisis exploratorio. Aquí, en cambio, ESCRIBIMOS la
+# hipótesis directamente en la sintaxis del modelo.
+#
+# Sintaxis de lavaan:
+#   =~   significa "se mide a través de" / "está indicado por"
+#        (el factor va a la izquierda, sus ítems observados a la
+#        derecha, separados por "+")
+#   ~~   (no se usa explícitamente aquí) especificaría covarianzas
+#        entre variables si se necesitara -- ver Paso 5, índices
+#        de modificación, donde sí aparece.
+
+modelo_confianza <- '
+  politica       =~ gobierno + partidos + parlamento + policia + tribunales +
+                     serv_civiles + sindicatos + television + prensa +
+                     elecciones + fuerzas_armadas
+  sociedad_civil =~ org_caritativas + mov_mujeres + mov_ambiental
+'
+# El objeto modelo_confianza es una CADENA DE TEXTO (entre comillas
+# simples), no código R ejecutable directamente -- lavaan tiene su
+# propio "mini-lenguaje" para describir modelos, que luego cfa()
+# interpreta.
+#
+# Nota importante: NO hace falta escribir una línea aparte para la
+# correlación entre "politica" y "sociedad_civil" -- cfa() permite
+# que los factores covaríen entre sí AUTOMÁTICAMENTE por defecto
+# (a diferencia de fa(), donde había que elegir explícitamente
+# rotate = 'oblimin' para permitir esa correlación).
+
+
+# ------------------------------------------------------------
+# 3. ESTIMACIÓN DEL MODELO
+# ------------------------------------------------------------
+# Los 14 ítems son ordinales de 4 categorías (1 = "mucha
+# confianza" ... 4 = "ninguna confianza"), NO variables continuas
+# -- el mismo problema que ya resolvimos en el AFE de WVS (Sesión
+# 4-5) con polychoric() y cor = 'poly'. Aquí el equivalente es el
+# argumento ordered.
+
+fit_afc <- cfa(modelo_confianza,
+               data = items_wvs,
+               ordered = c("gobierno", "partidos", "parlamento", "policia",
+                           "tribunales", "serv_civiles", "sindicatos",
+                           "television", "prensa", "elecciones",
+                           "fuerzas_armadas", "org_caritativas",
+                           "mov_mujeres", "mov_ambiental"))
+# Argumentos de cfa():
+#   modelo_confianza: primer argumento, la especificación del modelo
+#                      (el texto que escribiste en el Paso 2).
+#   data:              la tabla de datos, items_wvs.
+#   ordered:           vector con los nombres de las variables que
+#                      deben tratarse como ORDINALES. Al incluir
+#                      esto, cfa() automáticamente:
+#                        (a) calcula correlaciones POLICÓRICAS en
+#                            vez de Pearson, y
+#                        (b) cambia el estimador de ML a WLSMV
+#                            ("Weighted Least Squares Mean and
+#                            Variance adjusted") -- el método
+#                            recomendado para datos ordinales, que
+#                            además no exige el supuesto de
+#                            normalidad multivariada que si exige ML.
+#
+# Atajo: como los 14 ítems del modelo son EXACTAMENTE los mismos 14
+# que se declaran en "ordered", se podría simplificar con
+# ordered = TRUE (le pide a cfa() tratar TODOS los ítems del modelo
+# como ordinales, sin escribirlos uno por uno). Aquí se dejó la
+# lista completa por claridad didáctica.
+
+
+# ------------------------------------------------------------
+# 4. RESULTADOS: ÍNDICES DE AJUSTE Y CARGAS
+# ------------------------------------------------------------
+summary(fit_afc, fit.measures = TRUE, standardized = TRUE)
+# Argumentos de summary():
+#   fit_afc:            el objeto que acabas de estimar.
+#   fit.measures=TRUE:  agrega a la salida CFI, TLI, RMSEA, SRMR y
+#                        otros índices de ajuste global del modelo.
+#   standardized=TRUE:  agrega una columna con las cargas
+#                        ESTANDARIZADAS (comparables entre sí, en
+#                        la misma escala -1 a 1 que ya conoces de
+#                        fa()$loadings -- las cargas "crudas" sin
+#                        estandarizar dependen de la escala
+#                        original de cada ítem y son más difíciles
+#                        de comparar entre variables).
+
+# --- Umbrales convencionales para interpretar los índices ---
+#   CFI / TLI  > 0.90 (aceptable)  / > 0.95 (bueno)
+#   RMSEA      < 0.08 (aceptable)  / < 0.05 (bueno)
+#   SRMR       < 0.08
+# Ningún umbral es una regla matemática absoluta -- son
+# convenciones ampliamente usadas en la literatura (Hu y Bentler,
+# 1999, en tus lecturas complementarias del Tema 6), pero conviene
+# interpretarlas junto con el contexto sustantivo, no de forma
+# mecánica.
+
+fitMeasures(fit_afc, c("cfi", "tli", "rmsea", "srmr"))
+# fitMeasures(objeto, vector_de_nombres): extrae SOLO esos 4
+# índices, sin el resto de la tabla completa de summary() -- útil
+# para reportarlos de forma compacta en un artículo o tarea.
+
+parameterEstimates(fit_afc, standardized = TRUE) |>
+  filter(op == "=~")
+# Alternativa a summary() para ver SOLO las cargas factoriales (no
+# los índices de ajuste ni las varianzas). op == "=~" filtra las
+# filas correspondientes a relaciones "factor mide ítem" (el mismo
+# operador que usaste al escribir el modelo); existen otros
+# operadores como "~~" (covarianzas) que aquí no interesan.
+
+
+# ------------------------------------------------------------
+# 5. DIAGNÓSTICO: ÍNDICES DE MODIFICACIÓN
+# ------------------------------------------------------------
+# Antes de modificar el modelo por intuición (por ejemplo,
+# "quitemos el ítem con la carga más baja"), hay que preguntarle
+# al propio modelo qué modificación específica mejoraría más el
+# ajuste. Eso es justo lo que hace modindices().
+
+modificaciones <- modindices(fit_afc, sort = TRUE)
+# sort = TRUE: ordena el resultado de mayor a menor índice de
+# modificación (columna "mi"), para ver primero los candidatos más
+# influyentes.
+
+head(modificaciones, 10)
+# Muestra las primeras 10 filas (las de mayor "mi").
+#
+# Columnas más relevantes de esta tabla:
+#   lhs, op, rhs: la relación candidata. Si op = "~~" entre dos
+#                 ítems (por ejemplo, television ~~ prensa), sugiere
+#                 permitir que esos dos ítems compartan varianza
+#                 adicional MÁS ALLÁ de lo que ya comparten por
+#                 pertenecer al mismo factor -- típicamente porque
+#                 tienen algo en común entre sí (ambos son medios
+#                 de comunicación) que el modelo actual no captura.
+#   mi:           el índice de modificación -- cuánto BAJARÍA el
+#                 chi-cuadrado del modelo si se agregara ese
+#                 parámetro. Valores mayores a 10-11 suelen
+#                 considerarse candidatos a revisar.
+#
+# IMPORTANTE -- disciplina metodológica: un índice de modificación
+# alto es una PISTA, no una autorización automática para modificar
+# el modelo. Cada cambio debe tener sentido TEÓRICO, no solo
+# estadístico (recordar la cita de García, Jiménez y Rodríguez de
+# la Sesión 4: "no hay factor sin variable que lo sature" -- lo
+# mismo aplica en sentido inverso: no se agregan relaciones solo
+# porque el modelo "las pide" numéricamente, sin justificación
+# conceptual).
+
+
+# ------------------------------------------------------------
+# 6. COMPARACIÓN: ¿VALE LA PENA QUITAR "fuerzas_armadas"?
+# ------------------------------------------------------------
+# Ejercicio de comparación directa: mismo modelo, sin ese ítem (el
+# de menor comunalidad en el AFE de la Sesión 4-5).
+
+modelo_sin_fa <- '
+  politica       =~ gobierno + partidos + parlamento + policia + tribunales +
+                     serv_civiles + sindicatos + television + prensa + elecciones
+  sociedad_civil =~ org_caritativas + mov_mujeres + mov_ambiental
+'
+
+fit_sin_fa <- cfa(modelo_sin_fa,
+                   data = items_wvs,
+                   ordered = TRUE)
+# Aquí sí se puede usar ordered = TRUE directo (sin listar nombres),
+# porque los 13 ítems del modelo_sin_fa son exactamente los únicos
+# ítems presentes en esta versión del modelo.
+
+fitMeasures(fit_sin_fa, c("cfi", "tli", "rmsea", "srmr"))
+# Comparar manualmente contra fitMeasures(fit_afc, ...) del Paso 4.
+#
+# Pregunta de fondo: ¿la mejora en ajuste (si la hay) es lo
+# suficientemente grande como para justificar sacrificar un ítem
+# teóricamente relevante? No hay una regla automática -- es una
+# decisión que combina evidencia estadística con criterio
+# sustantivo. (Como referencia: al explorar este mismo ejercicio
+# con un método aproximado, la diferencia entre ambos modelos
+# resultó marginal -- ninguno de los dos alcanzó los umbrales de
+# "buen ajuste" de forma holgada, lo que sugiere que el problema de
+# ajuste NO está concentrado únicamente en fuerzas_armadas. Confirma
+# esto con tus propios números exactos al correr este bloque.)
+
+fitMeasures(fit_afc, c("cfi.robust", "tli.robust", "rmsea.robust", "srmr"))
+fitMeasures(fit_sin_fa, c("cfi.robust", "tli.robust", "rmsea.robust", "srmr"))
+
+# ------------------------------------------------------------
+# 7. CIERRE: DE AFE A AFC -- EL RECORRIDO COMPLETO
+# ------------------------------------------------------------
+# Con este resultado se cierra el arco narrativo completo del Tema
+# 2: en las Sesiones 4-5 (AFE), sin ninguna restricción impuesta,
+# el análisis DESCUBRIÓ que estos 14 ítems se organizan en 2
+# factores (política y sociedad civil), con cargas limpias y una
+# correlación moderada entre ambos (~0.51 con Phi). Aquí, en la
+# Sesión 6 (AFC), se tomó esa misma estructura -- ahora como una
+# hipótesis explícita -- y se puso a prueba formalmente contra los
+# datos, obteniendo índices de ajuste que permiten evaluar si la
+# teoría se sostiene.
+#
+print(fitMeasures(fit_afc, c('cfi','tli','rmsea','srmr')))
+# -- compara este resultado contra fa_wvs$Phi de la Sesión 4-5 y
+# discute en clase: ¿el AFC confirma lo que el AFE ya sugería, o
+# revela algo que el AFE no podía ver?
+
+modelo_confianza_v2 <- '
+  politica       =~ gobierno + partidos + parlamento + policia + tribunales +
+                     serv_civiles + sindicatos + television + prensa +
+                     elecciones + fuerzas_armadas
+  sociedad_civil =~ org_caritativas + mov_mujeres + mov_ambiental
+
+  television ~~ prensa
+'
+
+fit_afc_v2 <- cfa(modelo_confianza_v2,
+                  data = items_wvs,
+                  ordered = TRUE)
+# ordered = TRUE funciona directo aquí porque los 14 ítems del
+# modelo son exactamente los mismos 14 que ya declarabas uno por
+# uno en fit_afc -- no hace falta volver a escribir la lista completa.
+
+summary(fit_afc_v2, fit.measures = TRUE, standardized = TRUE)
+# Revisa aquí, en la sección "Covariances", que aparezca la nueva
+# línea "television ~~ prensa" con su estimación -- confirma que
+# el modelo sí incorporó la covarianza que agregaste.
+
+fitMeasures(fit_afc_v2, c("cfi.robust", "tli.robust", "rmsea.robust", "srmr"))
+# LA comparación que responde la pregunta de fondo: compárala
+# directamente contra:
+#   fit_afc (modelo original):     CFI=0.858  TLI=0.830  RMSEA=0.126
+#   fit_sin_fa (sin fuerzas_armadas): CFI=0.868  TLI=0.840  RMSEA=0.128
+
+# ------------------------------------------------------------
+# LIMPIEZA DE SESIÓN
+# ------------------------------------------------------------
+rm(list = ls())
+graphics.off()
+
 
 # ------------------------------------------------------------
 # LIMPIEZA DE SESIÓN (al terminar de trabajar)
