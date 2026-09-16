@@ -1,0 +1,336 @@
+# ============================================================
+# EJERCICIO DE UNA SOLA SESIÓN: AFE + AFC
+# "Radio de confianza" (Delhey, Newton y Welzel, 2011)
+# Curso: Análisis multivariado y métodos de clasificación de datos con R
+# El Colegio de México - Centro de Estudios Sociológicos
+# Profesor: Isaac Cisneros Yescas
+# ============================================================
+# Fuente: World Values Survey, Ola 7, México (cuestionario en
+# español, preguntas 58-63): "Me gustaría preguntarle cuánto
+# confía en la gente de diferentes grupos. ¿Podría decirme, para
+# cada uno, si usted confía completamente en la gente de ese
+# grupo, confía algo, confía poco o no confía nada?"
+# Escala: 1 = Confía completamente ... 4 = No confía nada.
+#
+# Hipótesis a explorar y confirmar (H1):
+# La confianza interpersonal se organiza en dos dimensiones
+# correlacionadas: confianza INTRAGRUPO (círculo cercano: familia,
+# vecinos, conocidos) y confianza EXTRAGRUPO (círculo lejano:
+# desconocidos, gente de otra religión, gente de otra
+# nacionalidad) -- la distinción clásica entre "confianza
+# particularizada" y "confianza generalizada" de la literatura de
+# capital social.
+#
+# A diferencia de los ejercicios anteriores (que trabajamos en
+# sesiones separadas), aquí recorremos AFE y AFC en una sola
+# sesión de trabajo, para que vean el proceso completo de
+# principio a fin sin interrupción.
+# ============================================================
+
+install.packages(c(
+  "tidyverse",    # manipulación de datos y gráficos
+  "psych",        # fa(), fa.parallel(), vss(), fa.diagram(), KMO(), polychoric()
+  "GPArotation",  # requerido por psych para la rotación oblimin
+  "corrplot",     # visualización de matrices de correlación
+  "haven",        # lectura de archivos de Stata (.dta)
+  "lavaan"        # análisis factorial confirmatorio (Sesión 6)
+))
+
+# ------------------------------------------------------------
+# 0. PAQUETES
+# ------------------------------------------------------------
+library(tidyverse)   # manipulación de datos y gráficos
+library(psych)       # fa(), fa.parallel(), vss(), fa.diagram(), KMO(), cortest.bartlett()
+library(GPArotation) # requerido por psych para la rotación oblimin
+library(corrplot)    # visualización de matrices de correlación
+library(haven)       # lectura de archivos de Stata (.dta)
+library(lavaan)      # cfa(), summary(), fitMeasures(), modindices() -- para la parte de AFC
+# Nota: es la primera vez que cargamos psych Y lavaan en el mismo
+# script -- ambos coexisten sin conflicto, cada uno se usa en su
+# parte correspondiente (psych para AFE, lavaan para AFC).
+
+
+# ------------------------------------------------------------
+# 1. CARGA Y SELECCIÓN DE ÍTEMS
+# ------------------------------------------------------------
+wvs <- read_dta("WVS_Wave_7_Mexico_Stata_v5_1.dta")
+
+wvs <- read_dta('/Users/isaaccisneros/Desktop/ISAAC/CURSO/Cursos 2026/DOCUMENTOS CURSO/R/TEMA 3 AFC/ULTIMO EJEMPLO/WVS_Wave_7_Mexico_Stata_v5.1.dta')
+
+# Ajusta la ruta según donde tengas guardado el archivo, y
+# recuerda usar "/" en vez de "\", incluso en Windows.
+
+items_confianza <- wvs |>
+  select(familia            = Q58,  # Su familia
+         vecinos            = Q59,  # Sus vecinos
+         conocidos          = Q60,  # Sus conocidos
+         desconocidos       = Q61,  # Gente que conoce por primera vez
+         otra_religion      = Q62,  # Gente de otra religión
+         otra_nacionalidad  = Q63) |>  # Gente de otra nacionalidad
+  drop_na()
+# select(nuevo = original, ...): selecciona y renombra en un solo
+# paso, con nombres descriptivos en español que usaremos en todo
+# el resto del script.
+# drop_na(): elimina cualquier fila con NA en alguna de las 6
+# columnas seleccionadas.
+
+nrow(items_confianza)
+# Deberías obtener alrededor de 1,708 casos completos.
+
+
+# ============================================================
+# PARTE A: ANÁLISIS FACTORIAL EXPLORATORIO (AFE)
+# ============================================================
+# Objetivo de esta parte: verificar, SIN imponer ninguna
+# estructura de antemano, si estos 6 ítems efectivamente se
+# organizan en 2 dimensiones distintas.
+
+# ------------------------------------------------------------
+# A.1 Matriz de correlación (Pearson, de referencia) -- y su
+#     corrección policórica (necesaria: escala de solo 4 categorías)
+# ------------------------------------------------------------
+cor(items_confianza)
+corrplot(cor(items_confianza),
+         method = 'color', type = 'upper', addCoef.col = 'black',
+         tl.col = 'black', tl.srt = 45,
+         title = 'Correlación (Pearson): confianza interpersonal (WVS México)',
+         mar = c(0,0,1,0))
+# Qué esperar: dos "bloques" visibles en el mapa de calor --
+# familia/vecinos/conocidos correlacionando entre sí (aunque
+# familia algo más débil, porque casi todo el mundo confía mucho
+# en su familia, con poca varianza para correlacionar), y
+# desconocidos/otra_religion/otra_nacionalidad correlacionando
+# fuerte entre sí (0.46 a 0.62) -- con una correlación más débil
+# ENTRE ambos bloques.
+
+# AJUSTE NECESARIO: al igual que con los 14 ítems de confianza
+# institucional (Bloque 3 del AFE de la Sesión 4-5), estos 6
+# ítems son ordinales de solo 4 categorías -- Pearson SUBESTIMA
+# sistemáticamente la correlación real entre ellos. Hay que
+# recalcular con correlaciones policóricas antes de continuar.
+
+poly_confianza <- polychoric(items_confianza)
+# polychoric() (de psych) estima la correlación asumiendo que
+# detrás de cada ítem ordinal de 4 categorías hay una variable
+# continua "verdadera" no observada.
+
+R_poly <- poly_confianza$rho
+# $rho es la matriz de correlaciones policóricas resultante (6x6).
+# A partir de aquí, TODO el análisis de esta parte debe usar
+# R_poly (o el argumento cor = 'poly') en vez de cor(items_confianza).
+
+corrplot(R_poly,
+         method = 'color', type = 'upper', addCoef.col = 'black',
+         tl.col = 'black', tl.srt = 45,
+         title = 'Correlación POLICÓRICA: confianza interpersonal (WVS)',
+         mar = c(0,0,1,0))
+# Es normal que estas correlaciones salgan un poco más ALTAS que
+# las de Pearson para los mismos pares -- es justamente la
+# corrección que se buscaba.
+
+
+# ------------------------------------------------------------
+# A.2 Adecuación muestral (con la matriz policórica)
+# ------------------------------------------------------------
+KMO(R_poly)
+cortest.bartlett(R_poly, n = nrow(items_confianza))
+# Ambas funciones aceptan una matriz de correlación ya calculada
+# en vez de los datos crudos -- por eso aquí se les pasa R_poly.
+# KMO esperado ≈ 0.76 (probablemente algo más alto con la
+# corrección policórica) -- "mediano/aceptable" en la escala
+# convencional -- más modesto que el 0.917 de confianza
+# institucional, pero suficiente para continuar.
+
+
+# ------------------------------------------------------------
+# A.3 ¿Cuántos factores retener?
+# ------------------------------------------------------------
+fa.parallel(items_confianza, fa = 'fa', cor = 'poly',
+            main = 'Análisis paralelo: confianza interpersonal (policórico)')
+vss(items_confianza, n = 4)
+# cor = 'poly' le pide a fa.parallel() calcular internamente la
+# matriz policórica antes de comparar contra datos aleatorios --
+# no hace falta pasarle R_poly manualmente aquí.
+# ¿El análisis paralelo recomienda 2 factores, coherente con la
+# hipótesis de "intragrupo" vs. "extragrupo"?
+
+# H0:Σ=Σ(θ)("mi modelo reproduce bien los datos observados")
+# El modelo con el BIC más bajo (más negativo, o menos positivo) es el preferido 
+
+# ------------------------------------------------------------
+# A.4 Extracción (ML) con rotación oblimin
+# ------------------------------------------------------------
+# Se elige oblimin directamente: hay razón teórica clara para
+# esperar que confianza intragrupo y extragrupo estén
+# correlacionadas (alguien generalmente más confiado tendería a
+# puntuar más alto en ambas), no independientes entre sí.
+
+fa_confianza <- fa(items_confianza, nfactors = 2, fm = 'ml', rotate = 'oblimin', cor = 'poly')
+print(fa_confianza$loadings, cutoff = 0.3)
+fa_confianza$Phi
+# cor = 'poly': igual que en fa.parallel(), le pide a fa() calcular
+# y usar la matriz de correlaciones policóricas -- sin este
+# argumento, fa() habría usado Pearson por defecto sobre datos
+# que en realidad son ordinales.
+# Qué esperar: familia, vecinos y conocidos cargando fuerte en un
+# factor (intragrupo); desconocidos, otra_religion y
+# otra_nacionalidad cargando fuerte en el otro (extragrupo). Phi
+# debería salir con una magnitud considerable (alrededor de 0.5),
+# confirmando que ambas formas de confianza están relacionadas
+# pero son distinguibles entre sí.
+
+
+# ------------------------------------------------------------
+# A.5 Diagrama y comunalidades
+# ------------------------------------------------------------
+fa.diagram(fa_confianza, main = 'Diagrama factorial: radio de confianza (WVS)')
+fa_confianza$communality
+# ¿Qué ítem tiene la comunalidad más baja? Probablemente
+# "familia" -- pero por una razón distinta a fuerzas_armadas en el
+# ejercicio de confianza institucional: aquí no es porque comparta
+# algo espurio con otro ítem, sino porque casi todo el mundo
+# responde lo mismo (mucha confianza), dejando poca varianza que
+# el factor común pueda explicar.
+
+
+# ============================================================
+# PARTE B: ANÁLISIS FACTORIAL CONFIRMATORIO (AFC)
+# ============================================================
+# Objetivo de esta parte: tomar la estructura que el AFE acaba de
+# sugerir -- 2 factores, intragrupo y extragrupo -- y ponerla a
+# prueba FORMALMENTE, con una hipótesis explícita y un índice de
+# ajuste global.
+
+# ------------------------------------------------------------
+# B.1 Especificación del modelo
+# ------------------------------------------------------------
+# Traducimos directamente lo que el AFE encontró en el Paso A.4 a
+# la sintaxis de lavaan -- ya no dejamos que el análisis "decida",
+# ahora SOMOS NOSOTROS quienes afirmamos esta estructura.
+
+modelo_confianza <- '
+  intragrupo =~ familia + vecinos + conocidos
+  extragrupo =~ desconocidos + otra_religion + otra_nacionalidad
+'
+# No hace falta escribir una línea aparte para la correlación
+# entre intragrupo y extragrupo -- cfa() la estima automáticamente
+# por defecto, igual que en el ejercicio de confianza institucional.
+
+
+# ------------------------------------------------------------
+# B.2 Estimación (WLSMV, por ser datos ordinales)
+# ------------------------------------------------------------
+fit_confianza <- cfa(modelo_confianza,
+                      data = items_confianza,
+                      ordered = TRUE)
+# ordered = TRUE (sin listar nombres) funciona aquí porque los 6
+# ítems del modelo son exactamente los únicos ítems presentes en
+# items_confianza -- no hace falta escribir la lista uno por uno.
+# Esto activa automáticamente: (a) correlaciones policóricas en
+# vez de Pearson, y (b) el estimador WLSMV en vez de máxima
+# verosimilitud estándar -- el mismo ajuste que ya conocen del
+# ejercicio de confianza institucional, necesario porque estos 6
+# ítems también son ordinales de 4 categorías.
+
+
+# ------------------------------------------------------------
+# B.3 Resultados: ÍNDICES DE AJUSTE ROBUSTOS (no los "Standard")
+# ------------------------------------------------------------
+summary(fit_confianza, fit.measures = TRUE, standardized = TRUE)
+# Recuerden la trampa ya conocida: en la salida completa, la
+# columna "Standard" da una versión artificialmente optimista con
+# datos ordinales -- SIEMPRE hay que mirar la fila "Robust".
+
+#1) Índices de ajuste — usando los robustos, como ya saben
+#Robust CFI  = 0.957   (umbral bueno: > 0.95) ✓
+#Robust TLI  = 0.919   (umbral aceptable: > 0.90) ✓
+#Robust RMSEA = 0.116  (umbral aceptable: < 0.08) ✗
+#SRMR        = 0.043   (umbral bueno: < 0.08) ✓
+#Tres de cuatro índices alcanzan un buen ajuste — de hecho, mucho mejor que el modelo de confianza institucional (que solo cumplía SRMR). 
+#El CFI robusto (0.957) está en la zona de "bueno", no solo "aceptable". 
+#El único que no cumple es el RMSEA robusto, que queda considerablemente por encima del umbral.
+
+#Cargas factoriales — buenas, con un matiz esperado en familia
+#intragrupo:  familia (0.467) < vecinos (0.796) < conocidos (0.837)
+#extragrupo:  desconocidos (0.751) < otra_religion (0.826) < otra_nacionalidad (0.853)
+#Todas las cargas son significativas (p < 0.001). 
+#Como anticipamos, familia tiene la carga más baja del modelo (0.467) — coherente con la explicación que ya dimos: 
+#no porque comparta algo espurio con otro ítem, sino porque tiene poca varianza (la mayoría de la gente responde "mucha confianza" en su familia, dejando poco margen para que el ítem discrimine).
+
+#La correlación entre factores — confirma H1
+#intragrupo ~~ extragrupo:  Std.all = 0.632,  z = 12.07,  p < 0.001
+#Una correlación considerable y muy significativa — más alta que la de confianza institucional (0.610). 
+#Esto confirma la hipótesis: confianza intragrupo y extragrupo son dimensiones distintas pero fuertemente relacionadas — alguien más confiado en su círculo cercano también tiende a confiar más en desconocidos, aunque sean conceptos medibles por separad
+
+#Este modelo tiene un ajuste considerablemente mejor que el de confianza institucional — CFI y TLI robustos superan los umbrales convencionales, y SRMR también. 
+#El único punto débil es el RMSEA, probablemente por tratarse de un modelo con muy pocos grados de libertad (8), donde este índice en particular tiende a ser menos estable. 
+#En conjunto, la evidencia respalda sólidamente la hipótesis de que la confianza interpersonal se organiza en dos dimensiones correlacionadas: intragrupo y extragrupo
+
+
+fitMeasures(fit_confianza, c("cfi.robust", "tli.robust", "rmsea.robust", "srmr"))
+# ESTE es el número que hay que reportar y discutir -- no el que
+# sale con fitMeasures(fit, c("cfi","tli","rmsea","srmr")) sin
+# ".robust", que daría la versión optimista y engañosa.
+#
+# Umbrales de referencia (los mismos de siempre):
+#   CFI / TLI  > 0.90 (aceptable) / > 0.95 (bueno)
+#   RMSEA      < 0.08 (aceptable) / < 0.05 (bueno)
+#   SRMR       < 0.08
+
+
+# ------------------------------------------------------------
+# B.4 Verificación: ¿el modelo tiene covarianzas residuales
+#     problemáticas, como pasó con confianza institucional?
+# ------------------------------------------------------------
+modindices(fit_confianza, sort = TRUE) |> head(10)
+# Con solo 6 ítems en 2 grupos temáticamente bien diferenciados
+# (sin un "sub-grupo" obvio dentro de cada factor, a diferencia de
+# television/prensa dentro de "política"), es razonable esperar
+# que ningún índice de modificación domine tan claramente como el
+# mi=195 que encontraron con confianza institucional. Confirmen
+# esto con sus propios números.
+
+#A diferencia de confianza institucional, donde mi=195 era abrumadoramente mayor que el resto (y con una interpretación teórica clara: ambos eran medios de comunicación), aquí ningún candidato domina claramente, y las magnitudes son mucho más modestas. 
+#Esto es consistente con los buenos índices de ajuste que ya vieron (CFI robusto=0.957, TLI robusto=0.919) — el modelo de 2 factores ya describe bien los datos, y estas modificaciones menores no son urgentes ni claramente justificables desde la teoría.
+
+# ------------------------------------------------------------
+# B.5 Comparación final: AFE vs. AFC, la misma hipótesis dos veces
+# ------------------------------------------------------------
+fa_confianza$Phi              # correlación estimada en el AFE (exploratorio)
+lavInspect(fit_confianza, "cor.lv")  # correlación estimada en el AFC (confirmatorio)
+# lavInspect(objeto, "cor.lv"): extrae la matriz de correlación
+# ESTANDARIZADA entre las variables latentes ("lv" = latent
+# variables) del modelo ya estimado -- el equivalente, en lavaan,
+# de $Phi en psych.
+#
+# Pregunta de cierre para discutir en clase: ¿la correlación entre
+# intragrupo y extragrupo que estima el AFC es parecida a la que
+# ya había sugerido el AFE? ¿Qué les dice esto sobre la solidez del
+# hallazgo, visto desde dos metodologías distintas?
+
+
+#########################################################################
+#Conclusión: AFE y AFC de la confianza interpersonal (radio de confianza)
+#Lo que el AFE reveló
+#Sin imponer ninguna estructura de antemano, el análisis exploratorio de los 6 ítems de confianza interpersonal (WVS México) reveló una organización clara en dos dimensiones: confianza intragrupo (familia, vecinos, conocidos) y confianza extragrupo (desconocidos, gente de otra religión, gente de otra nacionalidad) 
+#— la distinción clásica entre confianza particularizada y generalizada de la literatura de capital social (Delhey, Newton y Welzel, 2011). 
+#El análisis paralelo confirmó 2 factores, con cargas limpias (0.575 a 0.964) y una correlación considerable entre ambos (Phi ≈ 0.53), consistente con la expectativa teórica de que ambas formas de confianza, aunque distinguibles, tienden a moverse juntas.
+
+#Lo que el AFC confirmó
+#Al poner a prueba formalmente esta misma estructura como hipótesis explícita, el modelo confirmatorio mostró un ajuste considerablemente bueno: CFI robusto = 0.957 y SRMR = 0.043 superan cómodamente los umbrales convencionales, y el TLI robusto (0.919) también los alcanza. 
+#Solo el RMSEA robusto (0.116) queda por encima del umbral ideal — algo esperable en un modelo con pocos grados de libertad (dof=8), donde este índice en particular tiende a ser más inestable. 
+#Todas las cargas factoriales fueron altas y significativas, y la correlación entre factores en el AFC (0.632) resultó muy similar a la que ya sugería el AFE (0.53) — una convergencia que fortalece la confianza en el hallazgo, obtenida por dos caminos metodológicos distintos.
+
+#El diagnóstico de robustez
+#A diferencia del ejercicio de confianza institucional —donde una covarianza residual dominante (television~~prensa, mi=195) exigía modificar el modelo original—, aquí los índices de modificación no mostraron ningún candidato claramente superior (máximo mi=27.8, sin justificación teórica evidente). 
+#El modelo original, sin ninguna modificación, es la mejor especificación disponible.
+
+#Síntesis
+#La confianza interpersonal en México se organiza empíricamente en dos dimensiones distintas pero relacionadas —hacia el círculo cercano y hacia el círculo lejano—, un hallazgo que el AFE descubrió sin restricciones y que el AFC confirmó con un ajuste sólido, sin necesidad de ajustes post-hoc. 
+#Es un ejemplo de manual de cómo debe verse el recorrido completo AFE - AFC cuando la estructura teórica subyacente está bien especificada desde el inicio.
+
+# ------------------------------------------------------------
+# LIMPIEZA DE SESIÓN
+# ------------------------------------------------------------
+# rm(list = ls())
+# graphics.off()
