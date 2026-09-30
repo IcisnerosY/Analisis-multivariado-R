@@ -1,0 +1,324 @@
+# ============================================================
+# TEMA 3: ANALISIS DE CONGLOMERADOS EN R
+# Curso: Analisis multivariado y metodos de clasificacion de datos con R
+# Profesor: Isaac Cisneros Yescas
+# El Colegio de Mexico - Centro de Estudios Sociologicos
+# ============================================================
+#
+# Este script contiene dos demostraciones completas:
+#   DEMO 1: WVS Wave 7 Mexico   - confianza institucional (17 items)
+#   DEMO 2: LAPOP / Barometro de las Americas Mexico 2023 - desafeccion e ideologia
+#
+# En ambas se sigue la misma secuencia de 7 pasos:
+#   1) Importacion y seleccion de variables
+#   2) Recodificacion de valores fuera de rango / perdidos
+#   3) Estandarizacion
+#   4) Matriz de distancias
+#   5) Conglomeracion jerarquica (comparacion de metodos de encadenamiento)
+#   6) Determinacion del numero de conglomerados (codo y silueta)
+#   7) K-medias y perfilado sustantivo de los conglomerados
+#
+# NOTA SOBRE RUTAS (Mac/PC): este script asume que los archivos .dta
+# estan en el mismo directorio que el script. Si se ejecuta desde otra
+# carpeta, ajustar la ruta en read_dta(). Se recomienda usar rutas
+# relativas y evitar rutas con "C:\\" o "/Users/..." escritas a mano,
+# ya que la direccion de las diagonales difiere entre Windows y Mac.
+
+# ------------------------------------------------------------
+# 0) Paquetes
+# ------------------------------------------------------------
+# haven      -> para importar archivos .dta (Stata) con etiquetas
+# cluster    -> funciones de conglomeracion (dist, agnes, etc.)
+# factoextra -> visualizacion de dendrogramas, codo y silueta
+
+install.packages("haven")       # importar archivos .dta (Stata) con etiquetas
+install.packages("cluster")     # funciones de conglomeración (dist, hclust, etc.)
+install.packages("factoextra")  # visualización de dendrogramas, codo y silueta
+
+#####################
+
+library(haven)
+library(cluster)
+library(factoextra)
+
+# ============================================================
+# DEMO 1: WVS WAVE 7 MEXICO - CONFIANZA INSTITUCIONAL
+# ============================================================
+
+# ------------------------------------------------------------
+# 1.1) Importacion y seleccion de variables
+# ------------------------------------------------------------
+# Q65 a Q81 son los 17 items de confianza institucional del WVS
+# (fuerzas armadas, prensa, television, sindicatos, policia, poder
+# judicial, gobierno, partidos, parlamento, servicio civil,
+# universidades, elecciones, empresas, bancos, movimiento ambiental,
+# movimiento de mujeres, organizaciones de beneficencia).
+
+wvs <- read_dta("WVS_Wave_7_Mexico_Stata_v5_1.dta")
+
+wvs <- read_dta("/Users/isaaccisneros/Desktop/ISAAC/CURSO/Cursos 2026/DOCUMENTOS CURSO/R/TEMA 4 CONGLOMERADOS/WVS_Wave_7_Mexico_Stata_v5.1.dta")
+
+# Vector con los NOMBRES de las 17 variables de confianza (solo textos, aun no toca los datos)
+wvs_vars <- c("Q65", "Q66", "Q67", "Q68", "Q69", "Q70", "Q71", "Q72",
+              "Q73", "Q74", "Q75", "Q76", "Q77", "Q78", "Q79", "Q80", "Q81")
+
+# Extrae de la base esas 17 columnas, convierte cada una a numerica
+# (quita las etiquetas de Stata que trae read_dta, que estorban en scale() y dist())
+# y las regresa como data frame
+wvs_conf <- as.data.frame(lapply(wvs[wvs_vars], as.numeric))
+
+#wvs[wvs_vars] extrae de la base wvs (que tiene 403 columnas) solo esas 17 columnas.
+#lapply(..., as.numeric) aplica as.numeric a cada una de esas columnas, una por una, y devuelve una lista.
+#as.data.frame(...) convierte esa lista de nuevo en un data frame, que se guarda como wvs_conf.
+
+# ------------------------------------------------------------
+# 1.2) Recodificacion
+# ------------------------------------------------------------
+# La escala original del WVS va de 1 ("mucha confianza") a 4
+# ("ninguna confianza"), es decir, esta invertida respecto a la
+# lectura mas intuitiva. Aqui se invierte para que valores altos
+# signifiquen MAYOR confianza (1 = ninguna, 4 = mucha), lo cual
+# facilita la interpretacion de los perfiles mas adelante.
+
+# Recodifica como NA cualquier valor fuera del rango valido (1-4)
+wvs_conf[wvs_conf < 1 | wvs_conf > 4] <- NA
+
+# Invierte la escala: original 1=mucha confianza,4=ninguna -> ahora 1=ninguna,4=mucha
+wvs_conf <- as.data.frame(lapply(wvs_conf, function(x) 5 - x))
+
+#la escala va de 1 a 4 y, para invertir cualquier escala, la fórmula general es: (valor máximo + valor mínimo) − x
+#En este caso: (4 + 1) − x = 5 − x.
+
+# Los metodos de distancia no admiten valores perdidos: se eliminan
+# los casos con al menos un NA en las 17 variables (eliminacion por
+# lista, la misma logica usada en el Tema 1 para PCA/AFE).
+
+# Guarda cuantos casos (filas) hay antes de eliminar perdidos
+n_original <- nrow(wvs_conf)
+
+# Elimina por lista: quita todo caso que tenga al menos un NA en cualquiera de las 17 variables
+# (dist() y hclust() no admiten valores perdidos)
+wvs_completo <- na.omit(wvs_conf)
+
+# Imprime en consola cuantos casos habia y cuantos quedaron; "\n" agrega un salto de linea
+cat("WVS - N original:", n_original, " | N tras eliminar NA:", nrow(wvs_completo), "\n")
+
+# ------------------------------------------------------------
+# 1.3) Estandarizacion
+# ------------------------------------------------------------
+# Aunque las 17 variables comparten la misma escala (1-4), es buena
+# practica estandarizar siempre antes de calcular distancias, para
+# que ninguna variable con mayor varianza domine el calculo.
+
+wvs_z <- scale(wvs_completo)
+
+# ------------------------------------------------------------
+# 1.4) Matriz de distancias
+# ------------------------------------------------------------
+# Se usa distancia euclidiana, apropiada para variables continuas
+# o cuasi-continuas como estas escalas de 4 puntos estandarizadas.
+# NOTA: dist() sobre la base completa (n=1584) genera una matriz de
+# ~1.25 millones de pares; es normal que tome unos segundos.
+
+wvs_dist <- dist(wvs_z, method = "euclidean")
+
+# ------------------------------------------------------------
+# 1.5) Conglomeracion jerarquica: comparacion de metodos
+# ------------------------------------------------------------
+# Para que los dendrogramas sean legibles en clase, se usa una
+# submuestra aleatoria de 40 casos (fijando semilla para
+# reproducibilidad). La logica del metodo es la misma con n=40 o
+# con la base completa; solo cambia la legibilidad del grafico.
+
+# Fija la semilla para que la submuestra sea reproducible. Fija el punto de partida del generador de números pseudoaleatorios de R. 
+#Con la misma semilla, R produce siempre la misma secuencia "aleatoria", 
+#así que los resultados se pueden reproducir.
+set.seed(2026)
+
+# Selecciona aleatoriamente 40 casos (para que el dendrograma sea legible)
+# Elige al azar 40 posiciones de fila (sin repetir) entre las 1,584 personas de la base
+# y las guarda en sub_idx; solo son numeros de fila, todavia no son los datos
+sub_idx <- sample(seq_len(nrow(wvs_z)), 40)
+
+# Calcula distancias solo entre esos 40 casos. 
+# Calcula la distancia euclidiana entre cada par de las 40 personas elegidas
+# y guarda la matriz de distancias en wvs_sub_dist
+wvs_sub_dist <- dist(wvs_z[sub_idx, ])
+
+# Aplica conglomeracion jerarquica (single linkage) sobre la matriz de distancias
+# y guarda el resultado en hc_single; no imprime nada, el dendrograma se dibuja con plot()
+hc_single   <- hclust(wvs_sub_dist, method = "single")
+hc_complete <- hclust(wvs_sub_dist, method = "complete")
+hc_ward     <- hclust(wvs_sub_dist, method = "ward.D2")
+
+# Comparacion visual de los tres metodos:
+# - single: muestra encadenamiento (chaining), como se discutio en
+#   la presentacion (metodo del vecino mas cercano).
+# - complete: grupos mas compactos y balanceados.
+# - ward: minimiza la varianza intra-grupo; suele dar la particion
+#   mas interpretable para perfilado sustantivo.
+
+# Divide la ventana grafica en 1 fila x 3 columnas: los tres dendrogramas salen lado a lado
+par(mfrow = c(1, 3))
+plot(hc_single, main = "Single linkage", xlab = "", sub = "", cex = 0.6)
+plot(hc_complete, main = "Complete linkage", xlab = "", sub = "", cex = 0.6)
+plot(hc_ward, main = "Ward", xlab = "", sub = "", cex = 0.6)
+
+# Restablece la ventana grafica a un solo grafico por vez
+par(mfrow = c(1, 1))
+
+# ------------------------------------------------------------
+# 1.6) Determinacion del numero de conglomerados
+# ------------------------------------------------------------
+# Se calculan dos criterios sobre la base completa estandarizada:
+#   - Metodo del codo (within-cluster sum of squares)
+#   - Silueta promedio (que tan bien separado esta cada conglomerado)
+
+fviz_nbclust(wvs_z, kmeans, method = "wss") +
+  labs(title = "WVS: metodo del codo")
+
+fviz_nbclust(wvs_z, kmeans, method = "silhouette") +
+  labs(title = "WVS: silueta promedio")
+
+# La silueta senala k=2 como el optimo puramente estadistico, pero
+# la solucion de 2 grupos es sustantivamente pobre (solo distingue
+# "confiados" de "desconfiados" en bloque). Se opta por k=3, que
+# tiene una silueta apenas menor pero permite distinguir un tercer
+# perfil de confianza selectiva (ver interpretacion en 1.7).
+# ESTE ES UN PUNTO DE DISCUSION EN CLASE: el balance entre el
+# criterio estadistico y la interpretabilidad sustantiva.
+
+# ------------------------------------------------------------
+# 1.7) K-medias y perfilado
+# ------------------------------------------------------------
+set.seed(2026)
+k_wvs <- 3
+km_wvs <- kmeans(wvs_z, centers = k_wvs, nstart = 25)
+
+cat("\nWVS - tamano de los conglomerados (k =", k_wvs, "):\n")
+print(table(km_wvs$cluster))
+
+perfil_wvs <- aggregate(wvs_completo, by = list(conglomerado = km_wvs$cluster), FUN = mean)
+cat("\nWVS - perfil de conglomerados (medias en escala original 1-4, ya invertida):\n")
+print(round(perfil_wvs, 2))
+
+# Interpretacion orientativa (a discutir con el grupo):
+#   Conglomerado con medias mas bajas en todo   -> "desconfiados generalizados"
+#   Conglomerado con medias mas altas en todo   -> "confiados generalizados"
+#   Conglomerado intermedio, mas alto en
+#   universidades (Q75) que en partidos/gobierno -> "confianza selectiva"
+
+
+# ============================================================
+# DEMO 2: LAPOP / BAROMETRO DE LAS AMERICAS MEXICO 2023
+# DESAFECCION E IDEOLOGIA
+# ============================================================
+
+# ------------------------------------------------------------
+# 2.1) Importacion y seleccion de variables
+# ------------------------------------------------------------
+# Mismas variables de confianza institucional usadas en el Tema 1
+# (b21a, b13, b31, b21, b47a), mas la autoubicacion ideologica.
+# NOTA: en esta ola de LAPOP la variable de ideologia ya no se
+# llama "L1" (como en olas anteriores) sino "l1n".
+
+lapop <- read_dta("2023_MEX_2023_LAPOP_AmericasBarometer_v1_0_w.dta")
+
+lapop_vars <- c("b21a", "b13", "b31", "b21", "b47a", "l1n")
+lapop_dat <- as.data.frame(lapply(lapop[lapop_vars], as.numeric))
+
+# ------------------------------------------------------------
+# 2.2) Recodificacion
+# ------------------------------------------------------------
+# Las 5 variables de confianza van de 1 ("nada") a 7 ("mucho"): ya
+# tienen la direccion intuitiva, no se invierten. La ideologia
+# (l1n) va de 1 ("izquierda") a 10 ("derecha").
+
+rangos <- list(b21a = c(1, 7), b13 = c(1, 7), b31 = c(1, 7),
+               b21 = c(1, 7), b47a = c(1, 7), l1n = c(1, 10))
+for (v in names(rangos)) {
+  r <- rangos[[v]]
+  lapop_dat[[v]][lapop_dat[[v]] < r[1] | lapop_dat[[v]] > r[2]] <- NA
+}
+
+n_original_lapop <- nrow(lapop_dat)
+lapop_completo <- na.omit(lapop_dat)
+cat("\nLAPOP - N original:", n_original_lapop,
+    " | N tras eliminar NA:", nrow(lapop_completo), "\n")
+
+# ------------------------------------------------------------
+# 2.3) Estandarizacion
+# ------------------------------------------------------------
+# Aqui la estandarizacion es indispensable: las variables de
+# confianza usan una escala de 7 puntos y la ideologia una de 10.
+# Sin estandarizar, l1n pesaria artificialmente mas en la distancia.
+
+lapop_z <- scale(lapop_completo)
+
+# ------------------------------------------------------------
+# 2.4) Matriz de distancias
+# ------------------------------------------------------------
+lapop_dist <- dist(lapop_z, method = "euclidean")
+
+# ------------------------------------------------------------
+# 2.5) Conglomeracion jerarquica: comparacion de metodos
+# ------------------------------------------------------------
+set.seed(2026)
+sub_idx_l <- sample(seq_len(nrow(lapop_z)), 40)
+lapop_sub_dist <- dist(lapop_z[sub_idx_l, ])
+
+hc_single_l   <- hclust(lapop_sub_dist, method = "single")
+hc_complete_l <- hclust(lapop_sub_dist, method = "complete")
+hc_ward_l     <- hclust(lapop_sub_dist, method = "ward.D2")
+
+par(mfrow = c(1, 3))
+plot(hc_single_l, main = "Single linkage", xlab = "", sub = "", cex = 0.6)
+plot(hc_complete_l, main = "Complete linkage", xlab = "", sub = "", cex = 0.6)
+plot(hc_ward_l, main = "Ward", xlab = "", sub = "", cex = 0.6)
+par(mfrow = c(1, 1))
+
+# ------------------------------------------------------------
+# 2.6) Determinacion del numero de conglomerados
+# ------------------------------------------------------------
+fviz_nbclust(lapop_z, kmeans, method = "wss") +
+  labs(title = "LAPOP: metodo del codo")
+
+fviz_nbclust(lapop_z, kmeans, method = "silhouette") +
+  labs(title = "LAPOP: silueta promedio")
+
+# De nuevo, la silueta senala k=2 como optimo estadistico. Se opta
+# por k=4 porque distingue perfiles sustantivamente relevantes para
+# el estudio de la desafeccion (ver perfilado en 2.7): esta es la
+# misma discusion metodologica que en la Demo 1, ahora con un
+# ejemplo propio de la linea de investigacion sobre desafeccion e
+# ideologia.
+
+# ------------------------------------------------------------
+# 2.7) K-medias y perfilado
+# ------------------------------------------------------------
+set.seed(2026)
+k_lapop <- 4
+km_lapop <- kmeans(lapop_z, centers = k_lapop, nstart = 25)
+
+cat("\nLAPOP - tamano de los conglomerados (k =", k_lapop, "):\n")
+print(table(km_lapop$cluster))
+
+perfil_lapop <- aggregate(lapop_completo, by = list(conglomerado = km_lapop$cluster), FUN = mean)
+cat("\nLAPOP - perfil de conglomerados (medias en escala original):\n")
+print(round(perfil_lapop, 2))
+
+# Interpretacion orientativa (a discutir con el grupo, usando los
+# resultados reales obtenidos):
+#   - Conglomerado con confianza alta en todas las instituciones y
+#     ubicacion ideologica hacia la derecha -> "leales generalizados
+#     de derecha"
+#   - Conglomerado con confianza baja, sobre todo en partidos, y
+#     ubicacion centrista -> "desafectos institucionales centristas"
+#   - Conglomerado con confianza alta en el presidente pero baja en
+#     legislatura/partidos, ubicacion de izquierda -> "leales
+#     presidencialistas de izquierda"
+#   - Conglomerado intermedio en todas las variables -> "moderados"
+#
+# Estas etiquetas son un punto de partida para la discusion en
+# clase, no una conclusion cerrada: se recomienda contrastarlas con
+# otras variables sociodemograficas disponibles en la base LAPOP.
