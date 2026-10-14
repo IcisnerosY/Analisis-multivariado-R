@@ -11,7 +11,7 @@ Este repositorio se actualiza sesión por sesión conforme avanza el curso.
 | 1 | Análisis de Componentes Principales (PCA) | [`Tema_1_PCA/`](./Tema_1_PCA) |
 | 2 | Análisis Factorial Exploratorio | próximamente |
 | 3 | Análisis de Conglomerados | próximamente |
-| 4 | MDS y Análisis de Correspondencias | próximamente |
+| 4 | MDS y Análisis de Correspondencias | (https://github.com/IcisnerosY/Analisis-multivariado-R/edit/main/README.md#:~:text=Sesion11_MDS_CNEP2024_v1_0.R) |
 | 5 | Análisis de Clases Latentes | próximamente |
 | 6 | Modelos de Ecuaciones Estructurales (SEM) | próximamente |
 
