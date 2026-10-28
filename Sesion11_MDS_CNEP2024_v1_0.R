@@ -907,6 +907,736 @@ plot(ajuste_t, main = "Temas: voto frente a ideologia",
 # Cautela: con 14 temas el R2 es orientativo, y las correlaciones de las
 # que parte son muy pequenas
 
+
+# =====================================================================
+# Análisis multivariado y métodos de clasificación de datos con R
+# Centro de Estudios Sociológicos, El Colegio de México
+# Profesor: Isaac Cisneros Yescas
+#
+# Tema 4. Escalamiento multidimensional (MDS)
+# Práctica complementaria: votaciones en la Asamblea General de la ONU
+# Archivo: Sesion_MDS_ONU_unvotes_v1_0.R
+# =====================================================================
+#
+# CONTINUIDAD CON LA SESIÓN 11 (MDS con la CNEP 2024)
+# En la sesión anterior las distancias venían de PERCEPCIONES: los
+# encuestados ubicaban o evaluaban a los partidos y de ahí obtuvimos la
+# matriz de distancias. En esta sesión las distancias se CONSTRUYEN a partir de
+# COMPORTAMIENTO OBSERVADO: cómo vota cada país en la Asamblea General de la ONU.
+# La lógica del MDS es la misma (de una matriz de distancias a un mapa),
+# pero cambia de dónde sale la matriz y qué significa "estar cerca":
+# aquí, dos países están cerca si votan igual.
+#
+# Retomamos además tres cosas ya vistas:
+#   - cmdscale(), $GOF y eigenvalores (Sesión 11)
+#   - MDS métrico vs. no métrico: isoMDS(), stress, diagrama de Shepard
+#   - Conglomerados jerárquicos (Tema 3) sobre la misma matriz
+#
+# NOTA SOBRE LOS "RESULTADOS ESPERADOS"
+# Los valores de referencia que aparecen en los comentarios se
+# obtuvieron con los datos del paquete unvotes (sesiones 1 a 74, de 1946
+# a enero de 2020). Si la versión instalada es distinta, los números
+# pueden variar ligeramente; la interpretación no debería cambiar.
+# =====================================================================
+
+
+# =====================================================================
+# LA BASE DE DATOS: QUÉ ES unvotes
+# =====================================================================
+# Origen: Erik Voeten (Georgetown University) recopila las votaciones
+# nominales ("roll-call votes") de la Asamblea General de la ONU desde
+# 1946. La base original está en Harvard Dataverse (Voeten, Strezhnev y
+# Bailey, "United Nations General Assembly Voting Data"). El paquete de
+# R unvotes (David Robinson y Mine Çetinkaya-Rundel) la pone en formato
+# ordenado ("tidy") y lista para usar.
+#
+# Qué es una votación nominal: una resolución o enmienda en la que se
+# registra el voto de cada país. No incluye las resoluciones aprobadas
+# por consenso, sin votación, que son la mayoría de las que adopta la
+# Asamblea. Por eso los datos sobrerrepresentan los temas conflictivos.
+#
+# El paquete trae TRES tablas que se vinculan por la variable rcid
+# ("roll-call id", identificador único de cada votación):
+#
+# 1) un_votes: un renglón por país y votación (870,109 renglones).
+#    - rcid          identificador de la votación
+#    - country       nombre del país en inglés (200 países distintos)
+#    - country_code  código ISO de dos letras (MX, US, etc.)
+#    - vote          voto emitido: "yes", "abstain" o "no"
+#    Las AUSENCIAS no tienen renglón: si un país no votó, no aparece.
+#    Algunos países históricos no tienen country_code (NA): la República
+#    Federal de Alemania (Alemania Occidental), la República Árabe de
+#    Yemen y Zanzíbar. Esto importará en el paso 12.
+#
+# 2) un_roll_calls: un renglón por votación (6,203 votaciones).
+#    - rcid           identificador de la votación
+#    - session        número de sesión anual de la Asamblea (1 a 74)
+#    - importantvote  1 si el Departamento de Estado de EE.UU. la
+#                     clasificó como votación importante, 0 si no
+#                     (tiene NA en votaciones antiguas)
+#    - date           fecha de la votación
+#    - unres          número de la resolución (por ejemplo, R/1/66)
+#    - amend          1 si se votaba una enmienda
+#    - para           1 si se votaba un párrafo específico
+#    - short, descr   título breve y descripción en inglés
+#
+# 3) un_roll_call_issues: tema de cada votación (5,745 renglones).
+#    - rcid        identificador de la votación
+#    - short_name  código del tema
+#    - issue       nombre del tema en inglés
+#    Seis temas: me = conflicto palestino; nu = armas nucleares;
+#    di = control de armas y desarme; hr = derechos humanos;
+#    co = colonialismo; ec = desarrollo económico.
+#    Una votación puede tener MÁS DE UN tema (por eso hay más renglones
+#    que votaciones clasificadas) y unas 2,100 votaciones no tienen tema.
+# =====================================================================
+
+
+# ---------------------------------------------------------------------
+# PASO 0. Paquetes y carpeta de resultados
+# ---------------------------------------------------------------------
+# Vector con los nombres de los paquetes que usaremos.
+#   unvotes  datos de votaciones de la ONU
+#   dplyr    manipulación de datos (filter, select, mutate, joins)
+#   tidyr    reestructuración de datos (pivot_wider)
+#   ggplot2  gráficos
+#   ggrepel  etiquetas de texto que se acomodan para no encimarse
+#   MASS     isoMDS() y Shepard() para el MDS no métrico
+#   vegan    procrustes() y protest() para comparar configuraciones
+paquetes <- c("unvotes", "dplyr", "tidyr", "ggplot2", "ggrepel", "MASS", "vegan")
+
+# installed.packages() devuelve una tabla con los paquetes instalados;
+# rownames() extrae sus nombres. El operador %in% pregunta, para cada
+# elemento de "paquetes", si está en esa lista. El signo ! invierte la
+# respuesta, así que "faltan" guarda solo los paquetes NO instalados.
+faltan <- paquetes[!paquetes %in% rownames(installed.packages())]
+
+# Si falta alguno (length() mayor que 0), se instala. Si no falta
+# ninguno, la línea no hace nada. Así el script se puede correr varias
+# veces sin reinstalar todo.
+if (length(faltan) > 0) install.packages(faltan)
+
+# library() carga cada paquete en la sesión.
+library(unvotes)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(vegan)
+# vegan muestra un mensaje de bienvenida al cargarse ("This is vegan
+# ..."); no es un error.
+
+# MASS NO se carga con library() a propósito: MASS tiene una función
+# llamada select() que, si se carga después de dplyr, "tapa" a
+# dplyr::select() y produce errores confusos. En su lugar escribimos
+# MASS::isoMDS(). El operador :: significa "usa la función isoMDS del
+# paquete MASS" sin cargar el paquete completo.
+
+# dir.create() crea la carpeta "resultados" dentro del directorio de
+# trabajo, donde guardaremos los gráficos. showWarnings = FALSE evita
+# un aviso si la carpeta ya existe.
+dir.create("resultados", showWarnings = FALSE)
+
+# Para saber cuál es el directorio de trabajo (dónde quedará la carpeta):
+getwd()
+
+
+# ---------------------------------------------------------------------
+# PASO 1. Conocer las tres tablas
+# ---------------------------------------------------------------------
+# glimpse() (de dplyr) muestra el número de renglones y columnas, el
+# nombre y tipo de cada variable y sus primeros valores. Es como str(),
+# pero más legible.
+#   <dbl> = número; <chr> = texto; <fct> = factor (categorías);
+#   <date> = fecha
+glimpse(un_votes)
+# Esperado: 870,109 renglones y 4 columnas (rcid, country,
+# country_code, vote). vote es un factor con niveles yes, abstain, no.
+
+glimpse(un_roll_calls)
+# Esperado: 6,203 renglones (una por votación) y 9 columnas.
+
+glimpse(un_roll_call_issues)
+# Esperado: 5,745 renglones y 3 columnas (rcid, short_name, issue).
+
+# count() cuenta cuántos renglones hay en cada categoría de una variable.
+count(un_votes, vote)
+# Esperado: yes 693,664; abstain 110,897; no 65,548.
+# Casi 80% de los votos son "sí": la Asamblea aprueba la mayoría de lo
+# que se somete a votación. Lo informativo son los "no" y las
+# abstenciones, que es donde los países se diferencian.
+
+# range() devuelve el valor mínimo y el máximo de una variable.
+range(un_roll_calls$date)
+# Esperado: "1946-01-01" "2020-01-14". El signo $ extrae una columna
+# de una tabla: un_roll_calls$date es la columna date.
+
+# Temas disponibles y número de votaciones en cada uno
+count(un_roll_call_issues, short_name, issue)
+# Esperado: co 957, di 1,092, ec 765, hr 1,015, me 1,061, nu 855.
+
+
+# ---------------------------------------------------------------------
+# PASO 2. Unir tablas y recodificar el voto
+# ---------------------------------------------------------------------
+# El operador %>% ("pipe") pasa el resultado de la izquierda como
+# primer argumento de la función de la derecha. Se lee "y luego".
+#
+# inner_join(x, y, by = "rcid") une dos tablas usando la columna rcid
+# como llave: a cada renglón de un_votes (país-votación) le pega la
+# información de esa votación en un_roll_calls. "inner" significa que
+# solo se conservan los rcid que existen en ambas tablas.
+#
+# Antes de unir, select() se queda solo con las columnas de
+# un_roll_calls que necesitamos (rcid, session, date, importantvote),
+# para no arrastrar textos largos como descr.
+#
+# mutate() crea columnas nuevas:
+#   - anio: format(date, "%Y") extrae el año de la fecha como texto
+#     ("2005") y as.integer() lo convierte en número (2005), para poder
+#     filtrar con >= y <=.
+#   - voto_num: case_when() asigna un valor según una condición; se lee
+#     "si vote es yes, entonces 1; si es abstain, 0.5; si es no, 0".
+#     El signo ~ separa la condición del valor que se asigna.
+#
+# Convención de Voeten: sí = 1, abstención = 0.5, no = 0. La abstención
+# se trata como una posición intermedia entre apoyar y rechazar.
+votos <- un_votes %>%
+  inner_join(un_roll_calls %>% select(rcid, session, date, importantvote),
+             by = "rcid") %>%
+  mutate(anio = as.integer(format(date, "%Y")),
+         voto_num = case_when(vote == "yes"     ~ 1,
+                              vote == "abstain" ~ 0.5,
+                              vote == "no"      ~ 0))
+
+# Comprobación: tabla cruzada del voto original contra el recodificado.
+# useNA = "ifany" muestra los NA si los hubiera. Debe salir una
+# diagonal: yes con 1, abstain con 0.5, no con 0, y ningún NA.
+table(votos$vote, votos$voto_num, useNA = "ifany")
+
+# nrow() cuenta renglones. Debe ser igual al de un_votes (870,109):
+# todas las votaciones tienen su información en un_roll_calls.
+nrow(votos)
+
+
+# ---------------------------------------------------------------------
+# PASO 3. Delimitar periodo y países
+# ---------------------------------------------------------------------
+# Con casi 200 países el mapa sería ilegible. Elegimos 30 casos y los
+# identificamos con su código ISO de dos letras (country_code), que es
+# más estable que el nombre en inglés.
+#
+# data.frame() construye una tabla. Cada argumento es una columna y
+# todas deben tener la misma longitud (aquí, 30 elementos).
+#   codigo  código ISO, tal como aparece en country_code
+#   nombre  nombre en español, para las etiquetas de los gráficos
+#   region  agrupación para colorear el mapa. rep("x", 12) repite el
+#           texto "x" 12 veces. Los 12 primeros códigos son de América
+#           Latina, los 10 siguientes de Occidente y aliados, y los 8
+#           últimos, otros.
+#
+# El orden de nombre y region debe corresponder EXACTAMENTE al de codigo.
+paises <- data.frame(
+  codigo = c("MX", "BR", "AR", "CL", "CO", "PE", "VE", "CU", "BO", "NI", "UY", "GT",
+             "US", "CA", "GB", "FR", "DE", "IT", "JP", "KR", "AU", "IL",
+             "CN", "RU", "IN", "IR", "ZA", "TR", "SA", "EG"),
+  nombre = c("México", "Brasil", "Argentina", "Chile", "Colombia", "Perú",
+             "Venezuela", "Cuba", "Bolivia", "Nicaragua", "Uruguay", "Guatemala",
+             "Estados Unidos", "Canadá", "Reino Unido", "Francia", "Alemania",
+             "Italia", "Japón", "Corea del Sur", "Australia", "Israel",
+             "China", "Rusia", "India", "Irán", "Sudáfrica", "Turquía",
+             "Arabia Saudita", "Egipto"),
+  region = c(rep("América Latina", 12), rep("Occidente y aliados", 10), rep("Otros", 8))
+)
+
+# Ver la tabla para confirmar que cada código tiene su nombre correcto
+paises
+
+# setdiff(a, b) devuelve los elementos de a que NO están en b.
+# unique() elimina repetidos. Aquí preguntamos: ¿hay algún código de
+# nuestra lista que no exista en los datos?
+setdiff(paises$codigo, unique(votos$country_code))
+# Esperado: character(0), es decir, un vector vacío. Si apareciera un
+# código, habría que corregirlo en la tabla paises.
+
+# filter() conserva los renglones que cumplen TODAS las condiciones
+# separadas por comas:
+#   anio >= 2000                       votaciones desde el año 2000
+#   country_code %in% paises$codigo    solo nuestros 30 países
+votos_sel <- votos %>%
+  filter(anio >= 2000, country_code %in% paises$codigo)
+
+# n_distinct() cuenta valores distintos: número de votaciones que
+# entran al análisis.
+n_distinct(votos_sel$rcid)
+# Esperado: 1,861 votaciones, de 2000 a enero de 2020.
+
+# Variante opcional: solo votaciones "importantes" según EE.UU.
+# votos_sel <- votos_sel %>% filter(importantvote == 1)
+
+
+# ---------------------------------------------------------------------
+# PASO 4. Matriz países x votaciones
+# ---------------------------------------------------------------------
+# Los datos están en formato LARGO: un renglón por país y votación.
+# Para calcular distancias necesitamos formato ANCHO: un renglón por
+# país y una columna por votación, como la matriz casos x variables de
+# los temas anteriores. Aquí los "casos" son países y las "variables"
+# son votaciones.
+#
+# select() se queda con tres columnas: quién vota, qué votación y cómo.
+# pivot_wider() hace la reestructuración:
+#   names_from = rcid        cada valor de rcid se vuelve una columna
+#   values_from = voto_num   las celdas se llenan con el voto (1, 0.5, 0)
+# Si un país no votó en una votación, la celda queda como NA.
+m <- votos_sel %>%
+  select(country_code, rcid, voto_num) %>%
+  pivot_wider(names_from = rcid, values_from = voto_num)
+
+# pivot_wider() devuelve un "tibble" (tabla de tidyverse) con la
+# columna country_code como primera columna. Para dist() necesitamos
+# una MATRIZ numérica con los países como nombres de renglón:
+m <- as.data.frame(m)          # 1) convierte el tibble en data.frame
+rownames(m) <- m$country_code  # 2) usa los códigos como nombres de renglón
+m$country_code <- NULL         # 3) elimina la columna de texto (NULL borra)
+m <- as.matrix(m)              # 4) convierte en matriz numérica
+
+# dim() devuelve renglones y columnas.
+dim(m)
+# Esperado: 30 1862 (30 países por 1,862 votaciones).
+
+# Vistazo a una esquina de la matriz: primeros 5 países, primeras 6
+# votaciones. Los corchetes [renglones, columnas] seleccionan partes.
+m[1:5, 1:6]
+
+# is.na(m) produce una matriz de TRUE/FALSE (TRUE donde hay NA). El
+# signo ! la invierte (TRUE donde SÍ hay voto). rowSums() suma por
+# renglón, contando TRUE como 1: votos emitidos por cada país.
+# sort() los ordena de menor a mayor.
+sort(rowSums(!is.na(m)))
+# Esperado: Irán es el que menos vota (1,757 de 1,862); varios países
+# votan en todas o casi todas.
+
+# mean() de TRUE/FALSE da la proporción de TRUE: proporción de celdas
+# vacías. round(x, 3) redondea a tres decimales.
+round(mean(is.na(m)), 3)
+# Esperado: 0.016 (1.6% de ausencias): muy pocas.
+
+
+# ---------------------------------------------------------------------
+# PASO 5. Matriz de distancias: proporción de desacuerdo
+# ---------------------------------------------------------------------
+# dist() calcula la distancia entre todos los pares de RENGLONES.
+#   method = "manhattan": suma de diferencias absolutas,
+#   |voto A - voto B|, a lo largo de todas las votaciones.
+#   Por par de votos: mismo voto = 0; sí contra abstención = 0.5;
+#   sí contra no = 1.
+#
+# Con NA: dist() usa solo las votaciones donde AMBOS países votaron y
+# reescala la suma multiplicándola por (total de votaciones / votaciones
+# compartidas), para que los pares con más ausencias no parezcan más
+# cercanos solo por tener menos votaciones en común.
+#
+# Al dividir entre ncol(m), el número total de votaciones, la distancia
+# queda como DISCREPANCIA MEDIA en las votaciones compartidas:
+#   0 = votan siempre igual; 1 = votan siempre en sentido opuesto.
+# Es una distancia directamente interpretable: 0.20 significa
+# "desacuerdo en una quinta parte de las votaciones".
+d <- dist(m, method = "manhattan") / ncol(m)
+
+# Comprobación a mano con México y Estados Unidos:
+#   m["MX", ] es el renglón de México (todas sus votaciones)
+#   abs() es el valor absoluto
+#   mean(..., na.rm = TRUE) promedia ignorando los NA
+mean(abs(m["MX", ] - m["US", ]), na.rm = TRUE)
+# El resultado, 0.658, es la discrepancia media entre los votos de México y 
+# de Estados Unidos en las votaciones en que ambos participaron.
+
+# El mismo par en la matriz de distancias. as.matrix(d) convierte el
+# objeto dist (que solo guarda el triángulo inferior) en una matriz
+# cuadrada que se puede consultar por nombre.
+as.matrix(d)["MX", "US"]
+# Esperado: ambos dan 0.658. México y EE.UU. discrepan en promedio en
+# dos terceras partes de las votaciones.
+
+# Distancias de México con todos los demás, de menor a mayor
+sort(round(as.matrix(d)["MX", ], 3))
+# Esperado: los más cercanos son Perú (0.044), Chile (0.046) y Uruguay
+# (0.050); los más lejanos, Israel (0.623) y EE.UU. (0.658).
+
+# sum(is.na(d)) cuenta los NA de la matriz. Si dos países no
+# compartieran ninguna votación, su distancia sería NA y cmdscale()
+# fallaría.
+sum(is.na(d))
+# Esperado: 0.
+
+
+# ---------------------------------------------------------------------
+# PASO 6. MDS clásico (métrico) con cmdscale()
+# ---------------------------------------------------------------------
+# cmdscale() aplica el MDS clásico de Torgerson, como en la Sesión 11:
+# busca coordenadas cuyas distancias euclidianas reproduzcan lo mejor
+# posible las distancias de d.
+#   d        la matriz de distancias
+#   k = 2    número de dimensiones de la solución
+#   eig = TRUE  guarda TODOS los eigenvalores y calcula la bondad de
+#               ajuste ($GOF)
+# El resultado es una lista; sus elementos se consultan con $:
+#   $points  coordenadas de cada país (matriz de 30 x 2)
+#   $eig     eigenvalores
+#   $GOF     bondad de ajuste
+mds <- cmdscale(d, k = 2, eig = TRUE)
+
+# $GOF tiene dos valores:
+#   1) suma de los eigenvalores de las k dimensiones / suma del valor
+#      absoluto de TODOS los eigenvalores
+#   2) lo mismo, pero el denominador usa solo los eigenvalores positivos
+# Difieren cuando hay eigenvalores negativos.
+round(mds$GOF, 3)
+# Esperado: 0.829 0.885. Dos dimensiones reproducen buena parte de la
+# estructura de desacuerdo.
+# Es la bondad de ajuste de la solución en dos dimensiones: qué proporción de la estructura 
+# de la matriz de desacuerdo queda representada en el mapa. 
+# Se lee como el porcentaje de varianza explicada en el ACP
+
+# head(x, 10) muestra los 10 primeros elementos.
+round(head(mds$eig, 10), 4)
+
+# Proporción de la variación que representa cada dimensión
+round(head(mds$eig, 10) / sum(abs(mds$eig)), 3)
+# Esperado: 0.759 0.070 0.039 ... La primera dimensión domina por
+# completo: casi toda la estructura es UNIDIMENSIONAL.
+
+# Eigenvalores negativos: aparecen porque la distancia de Manhattan con
+# datos faltantes no es exactamente euclidiana. mds$eig < 0 da TRUE/FALSE
+# y sum() cuenta los TRUE.
+sum(mds$eig < 0)
+# Esperado: 11, todos muy pequeños (el mayor en valor absoluto es
+# cercano a -0.05, frente a 1.22 de la primera dimensión). No
+# preocupan: es el mismo diagnóstico que hicimos con la CNEP.
+
+# Gráfico de sedimentación de los eigenvalores, como en el ACP.
+#   names.arg   etiquetas de las barras (1 a 10)
+#   main, xlab, ylab   título y nombres de los ejes
+barplot(head(mds$eig, 10), names.arg = 1:10,
+        main = "Eigenvalores del MDS clásico",
+        xlab = "Dimensión", ylab = "Eigenvalor")
+# El "codo" está en la segunda barra: hay una dimensión fuerte.
+# Conservamos dos para poder dibujar un mapa y explorar matices.
+
+
+# ---------------------------------------------------------------------
+# PASO 7. Coordenadas y mapa
+# ---------------------------------------------------------------------
+# Armamos una tabla con las coordenadas de cada país:
+#   rownames(mds$points)  los códigos de país
+#   mds$points[, 1]       columna 1 = dimensión 1 (la coma vacía antes
+#                         del 1 significa "todos los renglones")
+#   mds$points[, 2]       columna 2 = dimensión 2
+# left_join() le pega nombre y región desde la tabla paises, usando
+# codigo como llave. "left" conserva todos los renglones de coord.
+coord <- data.frame(codigo = rownames(mds$points),
+                    dim1 = mds$points[, 1],
+                    dim2 = mds$points[, 2]) %>%
+  left_join(paises, by = "codigo")
+
+# El SIGNO de cada dimensión es arbitrario: el MDS puede devolver el
+# mapa reflejado y la solución es igual de válida. Para que siempre se
+# vea igual, fijamos que EE.UU. quede a la derecha:
+#   coord$dim1[coord$codigo == "US"]  valor de dim1 en el renglón de EE.UU.
+#   si es negativo, se multiplica toda la columna por -1
+if (coord$dim1[coord$codigo == "US"] < 0) coord$dim1 <- -coord$dim1
+
+# Gráfico con ggplot2. Se construye por capas unidas con +:
+#   ggplot(datos, aes(...))  define los datos y qué variable va a cada
+#                            eje y al color (aes = "aesthetics")
+#   geom_hline / geom_vline  líneas punteadas en cero como referencia
+#   geom_point(size = 2.5)   un punto por país
+#   geom_text_repel()        etiquetas que se acomodan sin encimarse:
+#       label = nombre       texto de la etiqueta
+#       fontface = ifelse(codigo == "MX", "bold", "plain")
+#                            México en negritas, los demás normal
+#       size                 tamaño de letra
+#       max.overlaps = 30    permite dibujar todas las etiquetas aunque
+#                            haya muchas juntas
+#       show.legend = FALSE  evita una leyenda con letras "a"
+#   labs()                   títulos de gráfico, ejes y leyenda
+#   theme_minimal()          estilo limpio, sin fondo gris
+g1 <- ggplot(coord, aes(x = dim1, y = dim2, color = region)) +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey60") +
+  geom_point(size = 2.5) +
+  geom_text_repel(aes(label = nombre,
+                      fontface = ifelse(codigo == "MX", "bold", "plain")),
+                  size = 3.2, max.overlaps = 30, show.legend = FALSE) +
+  labs(title = "Asamblea General de la ONU, 2000-2020",
+       subtitle = "MDS clásico sobre la proporción de desacuerdo en votaciones",
+       x = "Dimensión 1", y = "Dimensión 2", color = "Región") +
+  theme_minimal()
+
+# Escribir el nombre del objeto lo dibuja en el panel de gráficos.
+g1
+
+# ggsave() guarda el gráfico en archivo.
+#   file.path("resultados", "x.png") arma la ruta con el separador
+#   correcto en Mac (/) y en Windows (\)
+#   width, height  tamaño en pulgadas; dpi  resolución
+ggsave(file.path("resultados", "mds_onu_2000.png"), g1, width = 8, height = 6, dpi = 300)
+
+# QUÉ ESPERAR EN EL MAPA
+# - Dimensión 1: a la derecha y muy separados, EE.UU. e Israel; luego
+#   Canadá, Reino Unido, Australia, Francia, Alemania, Italia, Corea y
+#   Japón; Turquía cerca del centro. A la izquierda, Irán, Cuba, Egipto,
+#   Venezuela, Arabia Saudita, China, Nicaragua y Bolivia.
+# - América Latina forma un grupo compacto cerca del centro-izquierda;
+#   México queda junto a Chile, Perú y Uruguay.
+# - Dimensión 2: separa hacia arriba a India, Rusia, Israel y China.
+#   Hipótesis para discutir: son potencias nucleares, y la dimensión
+#   podría reflejar votaciones sobre armas nucleares y desarme (se
+#   puede verificar con la función del paso 11 y temas = c("nu", "di")).
+
+
+# ---------------------------------------------------------------------
+# PASO 8. ¿Qué mide la dimensión 1?
+# ---------------------------------------------------------------------
+# Hipótesis: la dimensión 1 ordena a los países según su cercanía con
+# Estados Unidos. Lo verificamos correlacionando la coordenada de cada
+# país con su distancia a EE.UU.
+#   as.matrix(d)[coord$codigo, "US"]  columna de EE.UU. de la matriz
+#   de distancias, con los países en el MISMO orden que coord (esto es
+#   indispensable para que la correlación compare país con país)
+dist_US <- as.matrix(d)[coord$codigo, "US"]
+
+# cor() calcula la correlación de Pearson.
+round(cor(coord$dim1, dist_US), 3)
+# Esperado: -0.998. La dimensión 1 es, casi exactamente, la distancia
+# a EE.UU.: mayor valor en dim1 = menor desacuerdo con EE.UU.
+
+# Pregunta para la clase: ¿qué pasa si se excluyen EE.UU. e Israel?
+# ¿Dos casos extremos dominan la solución? Para probarlo, en el paso 3
+# se pueden quitar "US" e "IL" de la tabla paises y volver a correr.
+
+
+# ---------------------------------------------------------------------
+# PASO 9. MDS no métrico: isoMDS(), stress y diagrama de Shepard
+# ---------------------------------------------------------------------
+# El MDS no métrico (Kruskal) solo intenta respetar el ORDEN de las
+# distancias, no su magnitud: si A y B están más lejos que C y D en los
+# datos, deben estarlo también en el mapa.
+#   MASS::isoMDS(d, y = ..., k = 2)
+#   d            matriz de distancias
+#   y = mds$points  configuración inicial: partimos de la solución
+#                   clásica, lo que acelera y estabiliza el algoritmo
+#   k = 2        número de dimensiones
+# isoMDS() es iterativo: imprime el stress inicial, el final y
+# "converged" cuando termina.
+nm <- MASS::isoMDS(d, y = mds$points, k = 2)
+
+# $stress es el stress-1 de Kruskal en PORCENTAJE (no en proporción).
+# Guía usual: menos de 5 bueno; 5 a 10 aceptable; 10 a 20 regular;
+# más de 20 pobre.
+round(nm$stress, 2)
+
+# Diagrama de Shepard: compara las distancias originales con las del
+# mapa.
+#   MASS::Shepard(d, nm$points)  calcula, para cada par de países:
+#     $x   distancia original (desacuerdo observado)
+#     $y   distancia en el mapa
+#     $yf  distancia ajustada por la regresión monótona
+sh <- MASS::Shepard(d, nm$points)
+
+# plot() dibuja los puntos:
+#   pch = 20  punto sólido; cex = 0.6  tamaño reducido
+#   col       color de los puntos
+# lines() agrega la línea escalonada de la regresión monótona:
+#   type = "S"  dibuja escalones; lwd = 2  línea gruesa
+plot(sh, pch = 20, cex = 0.6, col = "grey40",
+     xlab = "Desacuerdo observado", ylab = "Distancia en el mapa",
+     main = "Diagrama de Shepard (isoMDS)")
+lines(sh$x, sh$yf, type = "S", col = "red", lwd = 2)
+# Lectura: si los puntos se pegan a la línea roja, el mapa respeta el
+# orden de las distancias. Dispersión vertical grande = mal ajuste.
+
+# ¿Cambia la configuración entre el MDS métrico y el no métrico?
+# protest() hace un análisis de Procrustes: rota, refleja y reescala
+# una configuración para que se parezca lo más posible a la otra, y
+# luego mide su correlación.
+#   primer argumento   configuración de referencia
+#   segundo argumento  configuración que se ajusta
+#   permutations = 999 número de permutaciones para el valor p
+pro_nm <- protest(mds$points, nm$points, permutations = 999)
+pro_nm
+# Leer "Correlation in a symmetric Procrustes rotation": cercana a 1
+# significa que ambos mapas son prácticamente iguales. "Significance"
+# es el valor p de la prueba de permutaciones.
+
+
+# ---------------------------------------------------------------------
+# PASO 10. Conexión con el Tema 3: conglomerados sobre la misma matriz
+# ---------------------------------------------------------------------
+# El MDS y el análisis de conglomerados pueden partir de la MISMA matriz
+# de distancias: uno la representa en un mapa y el otro la divide en
+# grupos.
+#   hclust(d, method = "average")  conglomerado jerárquico con
+#   vinculación PROMEDIO: la distancia entre dos grupos es el promedio
+#   de las distancias entre todos sus miembros. No usamos Ward porque
+#   supone distancias euclidianas y la nuestra es de Manhattan.
+hc <- hclust(d, method = "average")
+
+# Dendrograma con nombres en español:
+#   hc$labels contiene los códigos en el orden de la matriz;
+#   match(hc$labels, paises$codigo) encuentra la posición de cada
+#   código en la tabla paises para tomar su nombre.
+#   xlab = "", sub = ""  quitan textos automáticos bajo el gráfico
+#   cex = 0.8           tamaño de las etiquetas
+plot(hc, labels = paises$nombre[match(hc$labels, paises$codigo)],
+     main = "Conglomerados jerárquicos (vinculación promedio)",
+     xlab = "", sub = "", cex = 0.8)
+
+# rect.hclust() dibuja rectángulos alrededor de los k grupos
+rect.hclust(hc, k = 3, border = "red")
+
+# cutree() corta el árbol en k = 3 grupos y devuelve el grupo de cada
+# país, con los códigos como nombres.
+grupos <- cutree(hc, k = 3)
+
+# grupos[coord$codigo] reordena los grupos en el orden de coord;
+# factor() los convierte en categorías para colorear.
+coord$grupo <- factor(grupos[coord$codigo])
+
+# table() cuenta cuántos países hay en cada grupo
+table(coord$grupo)
+# Esperado: un grupo con EE.UU. e Israel; otro con Canadá, Europa
+# occidental, Australia, Japón, Corea y Turquía; y uno con América
+# Latina, China, Rusia, India, Irán, Sudáfrica, Arabia Saudita y Egipto.
+# (La numeración 1, 2, 3 de los grupos puede variar.)
+
+# Mapa del MDS coloreado por conglomerado. Es el mismo código de g1,
+# con color = grupo en lugar de region.
+g2 <- ggplot(coord, aes(x = dim1, y = dim2, color = grupo)) +
+  geom_point(size = 2.5) +
+  geom_text_repel(aes(label = nombre), size = 3.2, max.overlaps = 30,
+                  show.legend = FALSE) +
+  labs(title = "MDS y conglomerados sobre la misma matriz de desacuerdo",
+       x = "Dimensión 1", y = "Dimensión 2", color = "Conglomerado") +
+  theme_minimal()
+g2
+
+ggsave(file.path("resultados", "mds_onu_conglomerados.png"), g2, width = 8, height = 6, dpi = 300)
+# Los conglomerados aparecen como franjas a lo largo de la dimensión 1:
+# coherente con una estructura casi unidimensional.
+
+
+# ---------------------------------------------------------------------
+# PASO 11. Una función para repetir el análisis
+# ---------------------------------------------------------------------
+# Para comparar periodos o temas tendríamos que repetir los pasos 3 a 6.
+# En lugar de copiar el código, lo "empaquetamos" en una función.
+#
+# function(argumentos) { cuerpo } crea una función. Sus argumentos:
+#   datos   la tabla de votos (usaremos votos, del paso 2)
+#   desde   año inicial
+#   hasta   año final
+#   temas   códigos de tema (por ejemplo "hr" o c("nu", "di"));
+#           = NULL significa que, si no se especifica, se usan todas
+#           las votaciones
+#
+# Dentro de la función:
+#   - filter() selecciona años y países, como en el paso 3
+#   - if (!is.null(temas)) {...}: SOLO si se indicaron temas, busca en
+#     un_roll_call_issues los rcid de esos temas (pull() extrae la
+#     columna como vector) y filtra las votaciones
+#   - el resto repite los pasos 4 a 6
+#   - list() devuelve tres resultados juntos: la matriz, las distancias
+#     y el MDS; se consultan con $matriz, $d y $mds
+construir_mds <- function(datos, desde, hasta, temas = NULL) {
+  sel <- datos %>%
+    filter(anio >= desde, anio <= hasta, country_code %in% paises$codigo)
+  if (!is.null(temas)) {
+    rc_tema <- un_roll_call_issues %>%
+      filter(short_name %in% temas) %>%
+      pull(rcid)
+    sel <- sel %>% filter(rcid %in% rc_tema)
+  }
+  mat <- sel %>%
+    select(country_code, rcid, voto_num) %>%
+    pivot_wider(names_from = rcid, values_from = voto_num)
+  mat <- as.data.frame(mat)
+  rownames(mat) <- mat$country_code
+  mat$country_code <- NULL
+  mat <- as.matrix(mat)
+  dd <- dist(mat, method = "manhattan") / ncol(mat)
+  list(matriz = mat, d = dd, mds = cmdscale(dd, k = 2, eig = TRUE))
+}
+
+# Prueba: con 2000 a 2100 (es decir, "hasta el final de los datos")
+# debe reproducir exactamente el GOF del paso 6.
+prueba <- construir_mds(votos, 2000, 2100)
+round(prueba$mds$GOF, 3)
+# Esperado: 0.829 0.885.
+
+
+# ---------------------------------------------------------------------
+# PASO 12. Comparación temporal: Guerra Fría vs. posguerra
+# ---------------------------------------------------------------------
+# Aplicamos la función a la década de 1980.
+gf <- construir_mds(votos, 1980, 1989)
+
+dim(gf$matriz)
+# Esperado: 27 1405. Faltan tres de nuestros países, por razones
+# históricas que vale la pena comentar:
+#   - Alemania (DE): en los ochenta votaba la República Federal de
+#     Alemania, que en los datos no tiene código (NA); "DE" corresponde
+#     a la Alemania unificada desde 1990.
+#   - Corea del Sur (KR): ingresó a la ONU en 1991.
+#   - Sudáfrica (ZA): su delegación fue excluida de la Asamblea entre
+#     1974 y 1994 por el apartheid.
+# Rusia sí aparece: en los datos, "RU" incluye a la URSS.
+
+# rownames() de la matriz muestra qué países entraron
+rownames(gf$matriz)
+
+round(gf$mds$GOF, 3)
+# Esperado: 0.872 0.913. La estructura también es casi unidimensional.
+
+# Para comparar los dos mapas, Procrustes necesita los MISMOS países en
+# el mismo orden. intersect() devuelve los elementos comunes.
+comunes <- intersect(rownames(gf$mds$points), rownames(mds$points))
+length(comunes)
+# Esperado: 27.
+
+# protest() compara las configuraciones de ambos periodos.
+#   mds$points[comunes, ]  coordenadas 2000-2020 de los países comunes
+#   gf$mds$points[comunes, ]  coordenadas 1980-1989, mismos países
+pro_t <- protest(mds$points[comunes, ], gf$mds$points[comunes, ],
+                 permutations = 999)
+pro_t
+# Esperado: correlación de Procrustes cercana a 0.90. Los mapas se
+# parecen mucho, pero no son idénticos: algunos países se movieron.
+
+# procrustes() hace el mismo ajuste y guarda las coordenadas para
+# graficar. plot() dibuja flechas: cada flecha va de la posición
+# ajustada en 1980-1989 a la posición en 2000-2020. Flecha larga =
+# país que cambió mucho.
+pro_obj <- procrustes(mds$points[comunes, ], gf$mds$points[comunes, ])
+plot(pro_obj, main = "Procrustes: 1980-1989 vs. 2000-2020")
+
+# text() agrega las etiquetas. pro_obj$X son las coordenadas de
+# referencia (2000-2020), centradas; pos = 3 pone el texto arriba del
+# punto y cex = 0.6 reduce la letra.
+text(pro_obj$X, labels = comunes, cex = 0.6, pos = 3)
+
+# Preguntas para discutir:
+# - En los ochenta, Rusia (URSS) estaba en el extremo opuesto a EE.UU.
+#   (desacuerdo de 0.746). ¿Dónde está ahora? (0.638)
+# - México estaba más lejos de Occidente en los ochenta, junto a los
+#   países no alineados, que en 2000-2020. Se puede verificar con
+#   round(as.matrix(gf$d)["MX", ], 3): su desacuerdo con Reino Unido
+#   baja de 0.495 a 0.322 y con Francia de 0.439 a 0.301, mientras que
+#   con Cuba sube de 0.077 a 0.136 y con Rusia de 0.120 a 0.234.
+#   ¿Cómo se relaciona con los cambios de su política exterior?
+# - ¿La estructura de bloques era más nítida en la Guerra Fría?                 
+
 rm(list = ls())   # borra todos los objetos del Environment (cnep, lr, mds_ord...)
 graphics.off()    # cierra todas las graficas abiertas
 cat("\014")       # limpia la consola (equivale a Ctrl + L)
